@@ -16,15 +16,16 @@
 #   LIBERO_PRO_PATH     Local LIBERO-PRO checkout.
 #   LIBERO_PLUS_PATH    Local LIBERO-plus checkout.
 #   LIBERO_PRO_HF_DIR   Snapshot with bddl_files/ and init_files/.
+#   LIBERO_PRO_CONFIG_PATH   LIBERO_CONFIG_PATH to write/use for LIBERO-Pro.
+#   LIBERO_PLUS_CONFIG_PATH  LIBERO_CONFIG_PATH to write/use for LIBERO-Plus.
 #   USE_MIRROR=1        Clone through ghfast.top.
 
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEFAULT_PATCH="$ROOT_DIR/physicalagent/primitives/workspace_pro/liberopro_register_perturbations.patch"
 
 ONLY=""
-PATCH_FILE="${PATCH_FILE:-$DEFAULT_PATCH}"
+PATCH_FILE="${PATCH_FILE:-"$ROOT_DIR/liberopro_register_perturbations.patch"}"
 
 usage() {
         cat <<'HELP'
@@ -42,6 +43,8 @@ Useful environment overrides:
     LIBERO_PRO_PATH     Local LIBERO-PRO checkout.
     LIBERO_PLUS_PATH    Local LIBERO-plus checkout.
     LIBERO_PRO_HF_DIR   Snapshot with bddl_files/ and init_files/.
+    LIBERO_PRO_CONFIG_PATH   LIBERO_CONFIG_PATH to write/use for LIBERO-Pro.
+    LIBERO_PLUS_CONFIG_PATH  LIBERO_CONFIG_PATH to write/use for LIBERO-Plus.
     USE_MIRROR=1        Clone through ghfast.top.
 
 Options:
@@ -96,6 +99,14 @@ PIP=("$VENV_PY" -m pip)
 LIBERO_PRO_PATH="${LIBERO_PRO_PATH:-$VENV_DIR/libero_pro}"
 LIBERO_PLUS_PATH="${LIBERO_PLUS_PATH:-$VENV_DIR/libero_plus}"
 LIBERO_PRO_HF_DIR="${LIBERO_PRO_HF_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/physicalagent/liberopro_hf}"
+LIBERO_PRO_CONFIG_PATH="${LIBERO_PRO_CONFIG_PATH:-${LIBERO_CONFIG_PATH:-$HOME/.liberopro}}"
+if [ -z "${LIBERO_PLUS_CONFIG_PATH:-}" ]; then
+    if [ "$ONLY" = "plus" ] && [ -n "${LIBERO_CONFIG_PATH:-}" ]; then
+        LIBERO_PLUS_CONFIG_PATH="$LIBERO_CONFIG_PATH"
+    else
+        LIBERO_PLUS_CONFIG_PATH="$HOME/.libero"
+    fi
+fi
 
 if [ "${USE_MIRROR:-0}" = "1" ]; then
     GH="https://ghfast.top/https://github.com"
@@ -109,9 +120,15 @@ echo "[install] sys.prefix      = $VENV_DIR"
 echo "[install] LIBERO_PRO      = $LIBERO_PRO_PATH"
 echo "[install] LIBERO_PLUS     = $LIBERO_PLUS_PATH"
 echo "[install] HF snapshot     = $LIBERO_PRO_HF_DIR"
+echo "[install] PRO config      = $LIBERO_PRO_CONFIG_PATH"
+echo "[install] PLUS config     = $LIBERO_PLUS_CONFIG_PATH"
 echo "[install] patch           = $PATCH_FILE"
 echo "[install] github prefix   = $GH"
 [ -n "$ONLY" ] && echo "[install] only            = $ONLY"
+
+python_clean() {
+    PYTHONNOUSERSITE=1 PYTHONPATH= "$VENV_PY" "$@"
+}
 
 clone_or_reuse() {
     local target_dir="$1" repo_url="$2"
@@ -147,10 +164,32 @@ sync_dir() {
 }
 
 site_packages() {
-    "$VENV_PY" - <<'PY'
+    python_clean - <<'PY'
 import site
 print(site.getsitepackages()[0])
 PY
+}
+
+write_pth() {
+    local package_name="$1" source_dir="$2" pth_name="$3"
+    local sp
+    sp="$(site_packages)"
+    echo "$source_dir" > "$sp/$pth_name"
+    echo "[$package_name] wrote $sp/$pth_name"
+}
+
+write_libero_config() {
+    local label="$1" config_dir="$2" benchmark_root="$3"
+    benchmark_root="$(realpath "$benchmark_root")"
+    mkdir -p "$config_dir"
+    cat > "$config_dir/config.yaml" <<EOF
+assets: $benchmark_root/./assets
+bddl_files: $benchmark_root/./bddl_files
+benchmark_root: $benchmark_root
+datasets: $benchmark_root/../datasets
+init_states: $benchmark_root/./init_files
+EOF
+    echo "[$label] wrote LIBERO config: $config_dir/config.yaml"
 }
 
 install_editable_or_pth() {
@@ -160,10 +199,7 @@ install_editable_or_pth() {
         return 0
     fi
     echo "[$package_name] WARN: pip install failed; falling back to .pth"
-    local sp
-    sp="$(site_packages)"
-    echo "$source_dir" > "$sp/$pth_name"
-    echo "[$package_name] wrote $sp/$pth_name"
+    write_pth "$package_name" "$source_dir" "$pth_name"
 }
 
 install_libero_pro() {
@@ -172,7 +208,7 @@ install_libero_pro() {
     clone_or_reuse "$LIBERO_PRO_PATH" "$GH/RLinf/LIBERO-PRO.git"
 
     local already_at target_at
-    already_at="$($VENV_PY -c "import liberopro, os; print(os.path.realpath(os.path.dirname(liberopro.__file__)))" 2>/dev/null || true)"
+    already_at="$(python_clean -c "import liberopro, os; print(os.path.realpath(os.path.dirname(liberopro.__file__)))" 2>/dev/null || true)"
     target_at="$(realpath "$LIBERO_PRO_PATH/liberopro" 2>/dev/null || echo "")"
     if [ -n "$already_at" ] && [ "$already_at" = "$target_at" ]; then
         echo "[pro] liberopro already editable at $LIBERO_PRO_PATH"
@@ -195,14 +231,17 @@ install_libero_pro() {
         popd >/dev/null
     fi
 
+    local dest="$LIBERO_PRO_PATH/liberopro/liberopro"
+    write_libero_config pro "$LIBERO_PRO_CONFIG_PATH" "$dest"
+
     if [ -d "$LIBERO_PRO_HF_DIR" ]; then
-        local dest="$LIBERO_PRO_PATH/liberopro/liberopro"
         sync_dir "$LIBERO_PRO_HF_DIR/bddl_files" "$dest/bddl_files" "*.bddl"
         sync_dir "$LIBERO_PRO_HF_DIR/init_files" "$dest/init_files" "*.pruned_init"
     else
-        echo "[pro] WARN: HF snapshot dir missing: $LIBERO_PRO_HF_DIR"
+        echo "[pro] HF snapshot dir missing: $LIBERO_PRO_HF_DIR"
+        echo "[pro] continuing with assets already present in $dest"
         cat <<EOF
-[pro] Download it with:
+[pro] To refresh perturbation assets, run:
 $VENV_PY - <<'PY'
 from huggingface_hub import snapshot_download
 snapshot_download(
@@ -214,7 +253,7 @@ PY
 EOF
     fi
 
-    LIBERO_TYPE=pro "$VENV_PY" - <<'PY'
+    PYTHONNOUSERSITE=1 PYTHONPATH= LIBERO_CONFIG_PATH="$LIBERO_PRO_CONFIG_PATH" LIBERO_TYPE=pro "$VENV_PY" - <<'PY'
 import os
 os.environ.setdefault("LIBERO_TYPE", "pro")
 import liberopro.liberopro.benchmark as bench
@@ -273,11 +312,13 @@ install_libero_plus() {
 
     clone_or_reuse "$LIBERO_PLUS_PATH" "$GH/sylvestf/LIBERO-plus.git"
 
-    local already_at target_at
-    already_at="$($VENV_PY -c "import liberoplus, os; print(os.path.realpath(os.path.dirname(liberoplus.__file__)))" 2>/dev/null || true)"
-    target_at="$(realpath "$LIBERO_PLUS_PATH/liberoplus" 2>/dev/null || echo "")"
+    local already_at target_at plus_pythonpath plus_package_dir
+    plus_pythonpath="$LIBERO_PLUS_PATH/libero"
+    plus_package_dir="$plus_pythonpath/libero"
+    already_at="$(python_clean -c "import libero, os; print(os.path.realpath(os.path.dirname(libero.__file__)))" 2>/dev/null || true)"
+    target_at="$(realpath "$plus_package_dir" 2>/dev/null || echo "")"
     if [ -n "$already_at" ] && [ "$already_at" = "$target_at" ]; then
-        echo "[plus] liberoplus already editable at $LIBERO_PLUS_PATH"
+        echo "[plus] libero already editable at $LIBERO_PLUS_PATH"
     else
         if [ -f "$LIBERO_PLUS_PATH/extra_requirements.txt" ]; then
             "${PIP[@]}" install -r "$LIBERO_PLUS_PATH/extra_requirements.txt" --no-build-isolation || \
@@ -286,17 +327,25 @@ install_libero_plus() {
         install_editable_or_pth plus "$LIBERO_PLUS_PATH" liberoplus.pth
     fi
 
-    "$VENV_PY" - <<'PY'
+    if ! python_clean -c "import libero" >/dev/null 2>&1; then
+        echo "[plus] pip editable metadata did not expose import 'libero'; using nested-package .pth"
+        write_pth plus "$plus_pythonpath" liberoplus.pth
+    fi
+
+    write_libero_config plus "$LIBERO_PLUS_CONFIG_PATH" "$plus_package_dir"
+
+    PYTHONNOUSERSITE=1 PYTHONPATH= LIBERO_CONFIG_PATH="$LIBERO_PLUS_CONFIG_PATH" "$VENV_PY" - <<'PY'
 import importlib
 import os
 
-module = importlib.import_module("liberoplus")
-print(f"[verify] liberoplus imported from {module.__file__}")
-assets = os.path.join(os.path.dirname(module.__file__), "liberoplus", "assets")
-if os.path.isdir(assets):
-    print(f"[verify] assets dir at {assets} has {sum(1 for _ in os.scandir(assets))} entries")
-else:
-    print(f"[verify] WARN: assets dir missing at {assets}")
+module = importlib.import_module("libero")
+print(f"[verify] libero imported from {module.__file__}")
+root = os.path.dirname(module.__file__)
+for name in ("bddl_files", "init_files"):
+    path = os.path.join(root, name)
+    if not os.path.isdir(path):
+        raise SystemExit(f"[verify] missing {name} dir at {path}")
+    print(f"[verify] {name} dir at {path} has {sum(1 for _ in os.scandir(path))} entries")
 PY
     echo "[plus] OK"
 }
