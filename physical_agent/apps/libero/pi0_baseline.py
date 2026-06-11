@@ -9,7 +9,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import sys
 import time
 from pathlib import Path
 
@@ -22,6 +21,9 @@ import torch
 
 from physical_agent.backends import add_external_rlinf_to_path
 from physical_agent.utils.config import get_pi05_checkpoint_path, get_repo_root
+from physical_agent.utils.logging import get_logger
+
+logger = get_logger("pi0_baseline")
 
 PHYSICALAGENT_ROOT = get_repo_root()
 add_external_rlinf_to_path(PHYSICALAGENT_ROOT)
@@ -115,9 +117,9 @@ def run_baseline(
         out_path = Path(out)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(json.dumps(audit, indent=2))
-        print(f"[done] wrote {out_path}")
+        logger.info("wrote %s", out_path)
     else:
-        print(json.dumps(audit, indent=2))
+        print(json.dumps(audit, indent=2))  # structured output to stdout
     return audit
 
 
@@ -140,7 +142,7 @@ def main() -> int:
     args = build_argparser().parse_args()
     model_path = args.model_path or get_pi05_checkpoint_path()
     if not model_path:
-        print("ERROR: set PI05_CHECKPOINT_PATH or pass --model_path", file=sys.stderr)
+        logger.error("PI05_CHECKPOINT_PATH env var or --model_path must be set")
         return 2
     run_baseline(
         suite=args.suite,

@@ -9,6 +9,9 @@ from typing import Any, Callable
 import anthropic
 
 from physical_agent.cerebrum.base import Cerebrum, CerebrumResult
+from physical_agent.utils.logging import get_logger
+
+logger = get_logger("cerebrum.anthropic")
 
 
 class AnthropicCerebrum:
@@ -42,7 +45,6 @@ class AnthropicCerebrum:
         tool_handler: Callable[[str, dict[str, Any]], dict[str, Any]],
         tool_result_formatter: Callable[[dict[str, Any]], list[dict[str, Any]]],
         max_turns: int = 80,
-        verbose: bool = True,
     ) -> CerebrumResult:
         messages: list[dict] = [{"role": "user", "content": user_message}]
         finish_result = None
@@ -51,14 +53,12 @@ class AnthropicCerebrum:
         last_error = None
 
         for turn in range(1, max_turns + 1):
-            if verbose:
-                print(f"\n[agent] === turn {turn}/{max_turns} ===")
+            logger.debug("=== turn %d/%d ===", turn, max_turns)
 
             response = self._call_with_retries(
                 system=system_prompt,
                 tools=tools_spec,
                 messages=messages,
-                verbose=verbose,
             )
             if response is None:
                 break
@@ -67,28 +67,24 @@ class AnthropicCerebrum:
             total_in += u.input_tokens
             total_out += u.output_tokens
 
-            if verbose:
-                self._log_response(response, u, total_in, total_out)
+            self._log_response(response, u, total_in, total_out)
 
             messages.append({"role": "assistant", "content": response.content})
 
             if response.stop_reason == "tool_use":
                 tool_results, finish_result, n = self._execute_tools(
-                    response, tool_handler, tool_result_formatter, verbose,
+                    response, tool_handler, tool_result_formatter,
                 )
                 n_tool_calls += n
                 messages.append({"role": "user", "content": tool_results})
                 if finish_result is not None:
-                    if verbose:
-                        print(f"\n[agent] FINISH called: {finish_result}")
+                    logger.info("FINISH called: %s", finish_result)
                     break
             elif response.stop_reason == "end_turn":
-                if verbose:
-                    print("[agent] model ended turn without a tool call. Stopping.")
+                logger.info("model ended turn without a tool call. Stopping.")
                 break
             else:
-                if verbose:
-                    print(f"[agent] unexpected stop_reason: {response.stop_reason}")
+                logger.warning("unexpected stop_reason: %s", response.stop_reason)
                 break
 
         return CerebrumResult(
@@ -113,7 +109,6 @@ class AnthropicCerebrum:
         system: str,
         tools: list[dict],
         messages: list[dict],
-        verbose: bool,
     ):
         last_err = None
         for outer in range(3):
@@ -133,29 +128,28 @@ class AnthropicCerebrum:
             ) as e:
                 last_err = e
                 wait = 10 * (outer + 1)
-                if verbose:
-                    print(
-                        f"[agent] API error '{type(e).__name__}: {e}' "
-                        f"— sleeping {wait}s (retry {outer + 1}/3)"
-                    )
+                logger.warning(
+                    "API error '%s: %s' — sleeping %ds (retry %d/3)",
+                    type(e).__name__, e, wait, outer + 1,
+                )
                 time.sleep(wait)
-        if verbose:
-            print(f"[agent] giving up after 3 retries; last error: {last_err}")
+        logger.error("giving up after 3 retries; last error: %s", last_err)
         return None
 
     @staticmethod
     def _log_response(response, usage, total_in, total_out):
         for block in response.content:
             if block.type == "text" and block.text.strip():
-                print(f"[claude] {block.text.strip()}")
+                logger.info("[claude] %s", block.text.strip())
             elif block.type == "tool_use":
                 s = json.dumps(block.input, default=str)
                 if len(s) > 250:
                     s = s[:250] + "...(+%d)" % (len(s) - 250)
-                print(f"[tool→] {block.name}({s})")
-        print(
-            f"[usage] in={usage.input_tokens}  out={usage.output_tokens}  "
-            f"stop={response.stop_reason}  total_in={total_in}  total_out={total_out}"
+                logger.info("[tool→] %s(%s)", block.name, s)
+        logger.info(
+            "[usage] in=%s  out=%s  stop=%s  total_in=%s  total_out=%s",
+            usage.input_tokens, usage.output_tokens,
+            response.stop_reason, total_in, total_out,
         )
 
     @staticmethod
@@ -163,7 +157,6 @@ class AnthropicCerebrum:
         response,
         tool_handler: Callable,
         tool_result_formatter: Callable,
-        verbose: bool,
     ):
         tool_results = []
         finish_result = None
@@ -175,12 +168,11 @@ class AnthropicCerebrum:
             result = tool_handler(block.name, block.input)
             if isinstance(result, dict) and result.get("_finish"):
                 finish_result = result
-            if verbose:
-                summary = _summarise_result(result)
-                s = json.dumps(summary, default=str)
-                if len(s) > 350:
-                    s = s[:350] + "...(+%d)" % (len(s) - 350)
-                print(f"[tool←] {block.name}: {s}")
+            summary = _summarise_result(result)
+            s = json.dumps(summary, default=str)
+            if len(s) > 350:
+                s = s[:350] + "...(+%d)" % (len(s) - 350)
+            logger.info("[tool←] %s: %s", block.name, s)
             tool_results.append({
                 "type": "tool_result",
                 "tool_use_id": block.id,

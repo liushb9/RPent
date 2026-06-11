@@ -18,6 +18,9 @@ from typing import Any, Callable
 
 from physical_agent.cerebrum.base import CerebrumResult
 from physical_agent.utils.config import get_repo_root
+from physical_agent.utils.logging import get_logger
+
+logger = get_logger("cerebrum.claude")
 
 
 class ClaudeCodeCerebrum:
@@ -88,7 +91,6 @@ class ClaudeCodeCerebrum:
         tool_handler: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
         tool_result_formatter: Callable[[dict[str, Any]], list[dict[str, Any]]] | None = None,
         max_turns: int = 80,
-        verbose: bool = True,
     ) -> CerebrumResult:
         """Run ``claude -p`` with the combined system+user prompt.
 
@@ -111,11 +113,12 @@ class ClaudeCodeCerebrum:
             prompt_file = f.name
 
         try:
-            if verbose:
-                print(f"[cc-cerebrum] prompt: {len(full_prompt)} chars → {prompt_file}")
-                print(f"[cc-cerebrum] workdir: {self._workdir}")
-                print(f"[cc-cerebrum] invoking claude -p --model {self._model} "
-                      f"(timeout={self._timeout_s}s, budget=${self._max_budget_usd})")
+            logger.info("prompt: %d chars → %s", len(full_prompt), prompt_file)
+            logger.info("workdir: %s", self._workdir)
+            logger.info(
+                "invoking claude -p --model %s (timeout=%ds, budget=$%s)",
+                self._model, self._timeout_s, self._max_budget_usd,
+            )
 
             cmd = [
                 "claude", "-p",
@@ -158,7 +161,6 @@ class ClaudeCodeCerebrum:
                     out_f=out_f,
                     rendered_chunks=rendered_chunks,
                     renderer=renderer,
-                    verbose=verbose,
                     timeout_prefix="[cc-cerebrum]",
                 )
 
@@ -167,11 +169,11 @@ class ClaudeCodeCerebrum:
             returncode = proc.returncode
             claude_stats = renderer.stats()
 
-            if verbose:
-                print(f"[cc-cerebrum] claude -p finished in {elapsed:.1f}s "
-                      f"rc={returncode}")
-                print(f"[cc-cerebrum] output: {output_path}")
-                print(f"[cc-cerebrum] raw stream: {raw_stream_path}")
+            logger.info(
+                "claude -p finished in %.1fs rc=%d", elapsed, returncode,
+            )
+            logger.info("output: %s", output_path)
+            logger.info("raw stream: %s", raw_stream_path)
 
             error = None
             if timed_out:
@@ -232,7 +234,6 @@ def _poll_stdout_until_exit(
     out_f,
     rendered_chunks: list[str],
     renderer: "_ClaudeCodeStreamRenderer",
-    verbose: bool,
     timeout_prefix: str,
 ) -> bool:
     """Poll child stdout in the main thread until exit or timeout."""
@@ -242,7 +243,7 @@ def _poll_stdout_until_exit(
             return False
         except subprocess.TimeoutExpired:
             msg = f"\n{timeout_prefix} TIMEOUT after {timeout_s}s; killing worker.\n"
-            _write_rendered(msg, raw_f, out_f, rendered_chunks, verbose, "timeout")
+            _write_rendered(msg, raw_f, out_f, rendered_chunks, "timeout")
             _terminate_process_group(proc)
             proc.wait(timeout=15)
             return True
@@ -258,7 +259,7 @@ def _poll_stdout_until_exit(
             if remaining <= 0 and proc.poll() is None:
                 timed_out = True
                 msg = f"\n{timeout_prefix} TIMEOUT after {timeout_s}s; killing worker.\n"
-                _write_rendered(msg, raw_f, out_f, rendered_chunks, verbose, "timeout")
+                _write_rendered(msg, raw_f, out_f, rendered_chunks, "timeout")
                 _terminate_process_group(proc)
                 proc.wait(timeout=15)
 
@@ -275,8 +276,7 @@ def _poll_stdout_until_exit(
                     rendered_chunks.append(rendered)
                     out_f.write(rendered)
                     out_f.flush()
-                    if verbose:
-                        print(rendered, end="", flush=True)
+                    logger.info(rendered.rstrip())
 
             if proc.poll() is not None:
                 # Drain any buffered lines after process exit.
@@ -291,8 +291,7 @@ def _poll_stdout_until_exit(
                         rendered_chunks.append(rendered)
                         out_f.write(rendered)
                         out_f.flush()
-                        if verbose:
-                            print(rendered, end="", flush=True)
+                        logger.info(rendered.rstrip())
                 break
     finally:
         selector.close()
@@ -304,7 +303,6 @@ def _write_rendered(
     raw_f,
     out_f,
     rendered_chunks: list[str],
-    verbose: bool,
     event_type: str,
 ) -> None:
     out_f.write(msg)
@@ -312,8 +310,7 @@ def _write_rendered(
     out_f.flush()
     raw_f.write(json.dumps({"type": event_type, "message": msg}) + "\n")
     raw_f.flush()
-    if verbose:
-        print(msg, end="", flush=True)
+    logger.info(msg.rstrip())
 
 
 class _ClaudeCodeStreamRenderer:

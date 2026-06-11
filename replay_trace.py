@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import time
 from pathlib import Path
 from typing import Any
 
 from physical_agent.utils.config import get_default_workdir_prefix
+from physical_agent.utils.logging import get_logger, init_run_logging
+
+logger = get_logger("trace")
 
 
 def _fmt(value: Any, digits: int = 4) -> str:
@@ -159,17 +161,20 @@ def build_argparser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_argparser().parse_args(argv)
     if args.start_step < 1:
-        print("--start-step must be >= 1", file=sys.stderr)
+        logger.error("--start-step must be >= 1")
         return 2
     if not args.trace.exists():
-        print(f"trace not found: {args.trace}", file=sys.stderr)
+        logger.error("trace not found: %s", args.trace)
         return 2
     if not args.dry_run and not args.workdir.is_dir():
-        print(f"workdir not found: {args.workdir}", file=sys.stderr)
+        logger.error("workdir not found: %s", args.workdir)
         return 2
 
+    # Initialise unified logging for this run
+    init_run_logging(args.workdir.parent if args.workdir.is_dir() else None)
+
     commands = _load_trace(args.trace)
-    print(f"[trace] loaded {len(commands)} commands from {args.trace}")
+    logger.info("loaded %d commands from %s", len(commands), args.trace)
 
     states_path = args.workdir / "states.json"
 
@@ -184,17 +189,17 @@ def main(argv: list[str] | None = None) -> int:
         if not args.dry_run:
             existing = _load_states(states_path)
             if step < len(existing) and isinstance(existing[step], dict):
-                print(
-                    f"[trace] refusing to replay step {step_id}: states.json already "
-                    f"has entry {step}. Use --start-step for the next pending step "
-                    f"or clear the workdir.",
-                    file=sys.stderr,
+                logger.error(
+                    "refusing to replay step %s: states.json already "
+                    "has entry %s. Use --start-step for the next pending step "
+                    "or clear the workdir.",
+                    step_id, step,
                 )
                 return 2
 
-        print(f"[trace] step {step_id}: {action}", flush=True)
+        logger.debug("step %s: %s", step_id, action)
         if args.dry_run:
-            print(json.dumps(clean, default=str))
+            print(json.dumps(clean, default=str))  # structured output to stdout
             continue
 
         start = time.time()
@@ -205,18 +210,18 @@ def main(argv: list[str] | None = None) -> int:
                 timeout_s=args.timeout_s, poll_s=args.poll_s,
             )
         except TimeoutError as exc:
-            print(f"[trace] TIMEOUT: {exc}", file=sys.stderr, flush=True)
+            logger.error("TIMEOUT: %s", exc)
             return 2
 
         summary, terminated = _summarize(
             entry, action=action, elapsed_s=time.time() - start,
         )
-        print(f"[trace] step {step_id}: {summary}", flush=True)
+        logger.info("step %s: %s", step_id, summary)
         if terminated and not args.continue_after_terminated:
-            print(f"[trace] libero_terminated=True at step {step_id}; stopping")
+            logger.info("libero_terminated=True at step %s; stopping", step_id)
             break
 
-    print("[trace] done")
+    logger.info("done")
     return 0
 
 

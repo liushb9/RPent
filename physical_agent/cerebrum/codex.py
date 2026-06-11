@@ -18,6 +18,9 @@ from typing import Any, Callable
 
 from physical_agent.cerebrum.base import CerebrumResult
 from physical_agent.utils.config import get_repo_root
+from physical_agent.utils.logging import get_logger
+
+logger = get_logger("cerebrum.codex")
 
 
 class CodexCerebrum:
@@ -58,7 +61,6 @@ class CodexCerebrum:
         tool_handler: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
         tool_result_formatter: Callable[[dict[str, Any]], list[dict[str, Any]]] | None = None,
         max_turns: int = 80,
-        verbose: bool = True,
     ) -> CerebrumResult:
         """Run ``codex exec`` with the combined system+user prompt.
 
@@ -78,14 +80,13 @@ class CodexCerebrum:
                 f.write(full_prompt)
                 prompt_file = f.name
 
-            if verbose:
-                model_desc = self._model if self._model else "(configured default)"
-                print(f"[codex-cerebrum] prompt: {len(full_prompt)} chars → {prompt_file}")
-                print(f"[codex-cerebrum] workdir: {self._workdir}")
-                print(
-                    f"[codex-cerebrum] invoking codex exec --model {model_desc} "
-                    f"(timeout={self._timeout_s}s)"
-                )
+            model_desc = self._model if self._model else "(configured default)"
+            logger.info("prompt: %d chars → %s", len(full_prompt), prompt_file)
+            logger.info("workdir: %s", self._workdir)
+            logger.info(
+                "invoking codex exec --model %s (timeout=%ds)",
+                model_desc, self._timeout_s,
+            )
 
             output_path = self._output_path or Path(
                 f"/tmp/codex_task_{os.getpid()}_{int(time.time() * 1000)}.out"
@@ -133,7 +134,6 @@ class CodexCerebrum:
                     out_f=out_f,
                     rendered_chunks=rendered_chunks,
                     renderer=renderer,
-                    verbose=verbose,
                     timeout_prefix="[codex-cerebrum]",
                 )
 
@@ -147,13 +147,11 @@ class CodexCerebrum:
             returncode = proc.returncode
             codex_stats = renderer.stats()
 
-            if verbose:
-                print(
-                    f"[codex-cerebrum] codex exec finished in {elapsed:.1f}s "
-                    f"rc={returncode}"
-                )
-                print(f"[codex-cerebrum] output: {output_path}")
-                print(f"[codex-cerebrum] raw stream: {raw_stream_path}")
+            logger.info(
+                "codex exec finished in %.1fs rc=%d", elapsed, returncode,
+            )
+            logger.info("output: %s", output_path)
+            logger.info("raw stream: %s", raw_stream_path)
 
             error = None
             if timed_out:
@@ -216,7 +214,6 @@ def _poll_stdout_until_exit(
     out_f,
     rendered_chunks: list[str],
     renderer: "_CodexStreamRenderer",
-    verbose: bool,
     timeout_prefix: str,
 ) -> bool:
     """Poll child stdout in the main thread until exit or timeout."""
@@ -226,7 +223,7 @@ def _poll_stdout_until_exit(
             return False
         except subprocess.TimeoutExpired:
             msg = f"\n{timeout_prefix} TIMEOUT after {timeout_s}s; killing worker.\n"
-            _write_rendered(msg, raw_f, out_f, rendered_chunks, verbose, "timeout")
+            _write_rendered(msg, raw_f, out_f, rendered_chunks, "timeout")
             _terminate_process_group(proc)
             proc.wait(timeout=15)
             return True
@@ -242,7 +239,7 @@ def _poll_stdout_until_exit(
             if remaining <= 0 and proc.poll() is None:
                 timed_out = True
                 msg = f"\n{timeout_prefix} TIMEOUT after {timeout_s}s; killing worker.\n"
-                _write_rendered(msg, raw_f, out_f, rendered_chunks, verbose, "timeout")
+                _write_rendered(msg, raw_f, out_f, rendered_chunks, "timeout")
                 _terminate_process_group(proc)
                 proc.wait(timeout=15)
 
@@ -259,8 +256,7 @@ def _poll_stdout_until_exit(
                     rendered_chunks.append(rendered)
                     out_f.write(rendered)
                     out_f.flush()
-                    if verbose:
-                        print(rendered, end="", flush=True)
+                    logger.info(rendered.rstrip())
 
             if proc.poll() is not None:
                 # Drain any buffered lines after process exit.
@@ -275,8 +271,7 @@ def _poll_stdout_until_exit(
                         rendered_chunks.append(rendered)
                         out_f.write(rendered)
                         out_f.flush()
-                        if verbose:
-                            print(rendered, end="", flush=True)
+                        logger.info(rendered.rstrip())
                 break
     finally:
         selector.close()
@@ -288,7 +283,6 @@ def _write_rendered(
     raw_f,
     out_f,
     rendered_chunks: list[str],
-    verbose: bool,
     event_type: str,
 ) -> None:
     out_f.write(msg)
@@ -296,8 +290,7 @@ def _write_rendered(
     out_f.flush()
     raw_f.write(json.dumps({"type": event_type, "message": msg}) + "\n")
     raw_f.flush()
-    if verbose:
-        print(msg, end="", flush=True)
+    logger.info(msg.rstrip())
 
 
 class _CodexStreamRenderer:

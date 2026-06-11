@@ -35,6 +35,9 @@ os.environ.setdefault("MUJOCO_GL", "egl")
 os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
 
 from physical_agent.utils.config import get_default_workdir_prefix, get_repo_root
+from physical_agent.utils.logging import get_logger, init_run_logging
+
+logger = get_logger("driver")
 from physical_agent.backends import add_external_rlinf_to_path
 
 PHYSICALAGENT_ROOT = get_repo_root()
@@ -191,7 +194,7 @@ def dump_state(driver, workdir: str, step_idx: int, log: dict | None = None) -> 
             with open(os.path.join(workdir, "camera_meta.json"), "w") as f:
                 json.dump(cam_meta_out, f, indent=2)
         except Exception as e:
-            print(f"[dump_state] get_camera_meta failed: {e}", flush=True)
+            logger.warning("get_camera_meta failed: %s", e)
             driver._camera_meta = cam_meta = {}
 
     # --- per-step RGB in the depth/K frame (vertical-flip of the raw buffer) ---
@@ -208,7 +211,7 @@ def dump_state(driver, workdir: str, step_idx: int, log: dict | None = None) -> 
             imageio.imwrite(os.path.join(images_cam_dir, f"image_cam_{step_idx:02d}.png"),
                             ci[::-1])
     except Exception as e:
-        print(f"[dump_state] image_cam dump failed: {e}", flush=True)
+        logger.warning("image_cam dump failed: %s", e)
 
     # --- per-step metric depth (agentview), native orientation, in meters ---
     try:
@@ -235,7 +238,7 @@ def dump_state(driver, workdir: str, step_idx: int, log: dict | None = None) -> 
             np.save(os.path.join(depths_dir, f"depth_{step_idx:02d}.npy"),
                     d.astype(np.float32))
     except Exception as e:
-        print(f"[dump_state] depth dump failed: {e}", flush=True)
+        logger.warning("depth dump failed: %s", e)
 
     blob = {
         "step_idx": step_idx,
@@ -383,14 +386,14 @@ def wait_for_command(cmd_path: str, poll_s: float = 0.5, timeout_s: float = 3600
                 os.remove(cmd_path)
                 return cmd
             except Exception as e:
-                print(f"[wait] error reading cmd: {e}, retrying")
+                logger.warning("error reading cmd: %s, retrying", e)
                 time.sleep(poll_s)
                 continue
         # Parent (agent/runner) died -> we've been reparented. Exit instead
         # of holding the GPU until the 1h timeout.
         ppid = os.getppid()
         if ppid != _INITIAL_PPID or ppid == 1:
-            print(f"[wait] parent died (ppid {_INITIAL_PPID} -> {ppid}); exiting")
+            logger.warning("parent died (ppid %s -> %s); exiting", _INITIAL_PPID, ppid)
             return None
         time.sleep(poll_s)
     return None
@@ -433,12 +436,15 @@ def main():
         if os.path.isfile(p):
             os.remove(p)
 
-    print(f"[setup] task={args.task}  seed={args.seed}  workdir={args.workdir}")
-    print(f"[setup] loading Pi0.5 ...")
+    # Initialise unified logging for this run
+    init_run_logging(args.workdir)
+
+    logger.info("task=%d  seed=%d  workdir=%s", args.task, args.seed, args.workdir)
+    logger.info("loading Pi0.5 ...")
     t0 = time.time()
     model_cfg = build_model_cfg(model_path=CHECKPOINT_PATH)
     model = get_openpi_model(model_cfg, torch_dtype=None).cuda().eval()
-    print(f"[setup] model ready in {time.time() - t0:.1f}s")
+    logger.info("model ready in %.1fs", time.time() - t0)
 
     env = make_env(args.task, args.seed, suite_name=args.suite,
                    max_episode_steps=args.max_episode_steps)
@@ -447,34 +453,34 @@ def main():
     driver._hide_object_coords = args.hide_object_coords
     driver.reset()
     dump_state(driver, args.workdir, step_idx=0)
-    print(f"[reset] initial state dumped (step 0).")
+    logger.info("initial state dumped (step 0)")
 
     # Auto-start recording so video is always available
     video_path = getattr(args, "video_path", None) or os.path.join(
         args.workdir, "episode.mp4")
     driver.start_recording()
-    print(f"[record] started; will save to {video_path}")
+    logger.info("recording started; will save to %s", video_path)
 
     cmd_path = os.path.join(args.workdir, "command.json")
     step = 1
     while True:
-        print(f"\n[step {step}] BLOCKED — waiting for {cmd_path}")
+        logger.debug("step %d: waiting for %s", step, cmd_path)
         cmd = wait_for_command(cmd_path, timeout_s=3600.0)
         if cmd is None:
-            print(f"[step {step}] TIMEOUT")
+            logger.warning("step %d: TIMEOUT", step)
             break
-        print(f"[step {step}] received: {cmd}")
+        logger.debug("step %d: received %s", step, cmd)
         log = execute(driver, cmd, args.workdir, step)
         dump_state(driver, args.workdir, step, log=log)
-        print(f"[step {step}] done in {log['elapsed_s']}s  result={log['result']}")
+        logger.debug("step %d: done in %ss  result=%s", step, log['elapsed_s'], log['result'])
         if cmd.get("action") == "exit":
             result = driver.stop_recording_and_save(video_path)
-            print(f"[record] saved {result['n_frames']} frames to {video_path}")
+            logger.info("saved %s frames to %s", result['n_frames'], video_path)
             break
         step += 1
 
     # final summary
-    print(f"\n[final] libero_terminated = {driver._libero_terminated}")
+    logger.info("libero_terminated = %s", driver._libero_terminated)
 
 
 if __name__ == "__main__":

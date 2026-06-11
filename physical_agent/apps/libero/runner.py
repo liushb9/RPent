@@ -55,6 +55,9 @@ from physical_agent.context.libero_prompts import (  # noqa: E402
     format_claude_code_prompt,
 )
 from physical_agent.utils import make_log_dir  # noqa: E402
+from physical_agent.utils.logging import get_logger, init_run_logging  # noqa: E402
+
+logger = get_logger("agent")
 from physical_agent.tools.repl import (  # noqa: E402
     execute_tool,
     get_tools_spec,
@@ -109,9 +112,9 @@ def start_driver(
     if perception:
         cmd += ["--hide_object_coords", "--always_render"]
         cmd += ["--video_path", str(wd / "episode.mp4")]
-    print(f"[agent] driver cmd: {' '.join(cmd)}")
-    print(f"[agent] driver log: {log_path}")
-    print(f"[agent] CUDA_VISIBLE_DEVICES={cuda_device}  workdir={wd}")
+    logger.info("driver cmd: %s", ' '.join(cmd))
+    logger.info("driver log: %s", log_path)
+    logger.info("CUDA_VISIBLE_DEVICES=%s  workdir=%s", cuda_device, wd)
     log_f = open(log_path, "w")
     proc = subprocess.Popen(
         cmd,
@@ -121,7 +124,7 @@ def start_driver(
         cwd=str(REPO_ROOT),
     )
 
-    print("[agent] waiting for states.json (Pi0 load ~80s)...")
+    logger.info("waiting for states.json (Pi0 load ~80s)...")
     t0 = time.time()
 
     def _has_initial_state() -> bool:
@@ -138,13 +141,13 @@ def start_driver(
     while not _has_initial_state():
         time.sleep(2)
         if proc.poll() is not None:
-            print("[agent] driver EXITED before becoming ready. Last log:")
-            print(Path(log_path).read_text()[-2000:])
+            logger.error("driver EXITED before becoming ready. Last log:")
+            logger.error("%s", Path(log_path).read_text()[-2000:])
             raise RuntimeError("driver exited prematurely")
         if time.time() - t0 > ready_timeout_s:
             proc.terminate()
             raise RuntimeError(f"driver not ready after {ready_timeout_s}s")
-    print(f"[agent] driver ready in {time.time()-t0:.1f}s")
+    logger.info("driver ready in %.1fs", time.time()-t0)
     return proc
 
 
@@ -257,7 +260,7 @@ def _emergency_save(workdir, output_dir, suite, task, seed, recipe_tag,
             out.mkdir(parents=True, exist_ok=True)
             recipe_path.write_text("\n".join(recipe_lines) + "\n")
             if verbose:
-                print(f"[agent] [emergency_save] wrote {recipe_path} ({len(recipe_lines)} cmds)")
+                logger.debug("[emergency_save] wrote %s (%d cmds)", recipe_path, len(recipe_lines))
 
     # Build a minimal audit (PRO schema) if missing
     if not audit_path.exists():
@@ -292,8 +295,8 @@ def _emergency_save(workdir, output_dir, suite, task, seed, recipe_tag,
         out.mkdir(parents=True, exist_ok=True)
         audit_path.write_text(json.dumps(record, indent=2, default=str))
         if verbose:
-            print(f"[agent] [emergency_save] wrote {audit_path} "
-                  f"(libero_terminated={record['libero_terminated']})")
+            logger.debug("[emergency_save] wrote %s (libero_terminated=%s)",
+                         audit_path, record['libero_terminated'])
 
 
 # ---------------------------------------------------------------------------
@@ -343,13 +346,16 @@ def run_one_cell(
     if max_episode_steps == 600 and "libero_10" in suite:
         max_episode_steps = 5000
         if verbose:
-            print("[agent] auto-bumped max_episode_steps to 5000 for libero_10")
+            logger.debug("auto-bumped max_episode_steps to 5000 for libero_10")
 
     # ---- resolve output directory early so the workdir can live inside it ----
     if output_dir is None:
         output_dir = str(make_log_dir(suite=suite, task=task, seed=seed, repo_root=REPO_ROOT))
     else:
         Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+    # Initialise unified logging for this run
+    init_run_logging(output_dir)
 
     # ---- resolve workdir ----
     # The driver writes directly into the run's output_dir (no `repl/`
@@ -510,7 +516,6 @@ def run_one_cell(
             tool_handler=execute_tool,
             tool_result_formatter=tool_result_to_content_blocks,
             max_turns=max_turns,
-            verbose=verbose,
         )
         finish_result = result.finish_result
         messages = result.messages
@@ -518,8 +523,7 @@ def run_one_cell(
         agent_error = result.error
     except Exception as e:
         agent_error = f"{type(e).__name__}: {e}"
-        if verbose:
-            print(f"[agent] EXCEPTION in agent loop: {agent_error}")
+        logger.error("EXCEPTION in agent loop: %s", agent_error)
     finally:
         # Salvage: if the sim reached libero_terminated=True before the
         # agent crashed (or before it called finish), still write a
@@ -528,8 +532,7 @@ def run_one_cell(
             _emergency_save(workdir, output_dir, suite, task, seed, recipe_tag,
                             agent_error, regime=regime, verbose=verbose)
         except Exception as e:
-            if verbose:
-                print(f"[agent] emergency save failed: {e}")
+            logger.error("emergency save failed: %s", e)
         if proc is not None:
             stop_driver(proc, workdir=workdir)
 
@@ -546,13 +549,14 @@ def run_one_cell(
     with open(transcript_path, "w") as f:
         json.dump(record, f, indent=2, default=str)
     if verbose:
-        print(f"\n[agent] elapsed: {elapsed:.1f}s")
-        print(f"[agent] usage: in={stats.get('total_input_tokens', '?')} "
-              f"out={stats.get('total_output_tokens', '?')} "
-              f"tool_calls={stats.get('tool_calls', '?')}")
-        print(f"[agent] transcript: {transcript_path}")
+        logger.info("elapsed: %.1fs", elapsed)
+        logger.info("usage: in=%s out=%s tool_calls=%s",
+                     stats.get('total_input_tokens', '?'),
+                     stats.get('total_output_tokens', '?'),
+                     stats.get('tool_calls', '?'))
+        logger.info("transcript: %s", transcript_path)
         if agent_error:
-            print(f"[agent] error: {agent_error}")
+            logger.error("error: %s", agent_error)
     return record
 
 
@@ -624,10 +628,10 @@ def main() -> int:
         api_key = args.api_key
         base_url = args.base_url
     if args.cerebrum == "anthropic" and not api_key:
-        print("ERROR: set ANTHROPIC_API_KEY env var or pass --api_key", file=sys.stderr)
+        logger.error("ANTHROPIC_API_KEY env var or --api_key must be set")
         return 2
     if args.cerebrum == "openai_compat" and not api_key:
-        print("ERROR: set OPENAI_COMPAT_API_KEY or OPENAI_API_KEY or pass --api_key", file=sys.stderr)
+        logger.error("OPENAI_COMPAT_API_KEY or OPENAI_API_KEY or --api_key must be set")
         return 2
 
     run_one_cell(

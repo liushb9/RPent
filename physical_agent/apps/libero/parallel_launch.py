@@ -49,6 +49,9 @@ from physical_agent.utils.config import (
     get_openai_compat_api_key,
     get_openai_compat_base_url,
 )
+from physical_agent.utils.logging import get_logger, init_run_logging
+
+logger = get_logger("parallel")
 
 _THIS_DIR = Path(__file__).resolve().parent
 
@@ -187,11 +190,11 @@ def main() -> int:
         for t in args.tuples:
             parts = t.split(":")
             if len(parts) != 3:
-                print(f"bad tuple: {t!r} (expected suite:task:seed)", file=sys.stderr)
+                logger.error("bad tuple: %r (expected suite:task:seed)", t)
                 return 2
             cells.append((parts[0], int(parts[1]), int(parts[2])))
     if not cells:
-        print("nothing to do (pass --seeds or --tuples)", file=sys.stderr)
+        logger.error("nothing to do (pass --seeds or --tuples)")
         return 2
 
     if args.cerebrum == "openai_compat":
@@ -204,14 +207,16 @@ def main() -> int:
         api_key = args.api_key
         base_url = args.base_url
     if args.cerebrum == "anthropic" and not api_key:
-        print("ERROR: ANTHROPIC_API_KEY missing", file=sys.stderr)
+        logger.error("ANTHROPIC_API_KEY missing")
         return 2
     if args.cerebrum == "openai_compat" and not api_key:
-        print("ERROR: OPENAI_COMPAT_API_KEY or OPENAI_API_KEY missing", file=sys.stderr)
+        logger.error("OPENAI_COMPAT_API_KEY or OPENAI_API_KEY missing")
         return 2
 
     n_devices = len(args.cuda_devices)
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+    # Initialise unified logging for this run
+    init_run_logging(args.log_dir)
     workdir_root = args.workdir_root or os.environ.get("PHYSICALAGENT_WORKDIR_PREFIX")
     if workdir_root is None:
         workdir_root = args.output_dir
@@ -234,12 +239,12 @@ def main() -> int:
                 return
             time.sleep(2)
 
-    print(f"[parallel] launching {len(cells)} cells across {n_devices} GPUs")
+    logger.info("launching %d cells across %d GPUs", len(cells), n_devices)
     launched = 0
     for i, (suite, task, seed) in enumerate(cells):
         tag = f"{suite.replace('libero_','')}_t{task}_s{seed}"
         if args.skip_existing and (Path(args.output_dir) / f"{tag}.json").exists():
-            print(f"  [{i}] {tag}  SKIP existing audit")
+            logger.info("  [%d] %s  SKIP existing audit", i, tag)
             continue
         if args.dry_run:
             slot = i % n_devices
@@ -270,9 +275,9 @@ def main() -> int:
             openai_compat_no_images=args.openai_compat_no_images,
         )
 
-        print(f"  [{i}] {tag}  GPU={cuda}  workdir={workdir}  log={log_path}")
+        logger.info("  [%d] %s  GPU=%s  workdir=%s  log=%s", i, tag, cuda, workdir, log_path)
         if args.dry_run:
-            print(f"      cmd: {' '.join(cmd)}")
+            logger.debug("      cmd: %s", ' '.join(cmd))
             continue
 
         log_f = open(log_path, "w")
@@ -302,26 +307,26 @@ def main() -> int:
     if args.dry_run:
         return 0
 
-    print(f"\n[parallel] waiting for {len(procs)} cells...")
+    logger.info("waiting for %d cells...", len(procs))
     t0 = time.time()
     for proc, log_path, tag, cell, _slot in list(active):
         rc = proc.wait()
         result = _summarize_process(proc, log_path, tag, cell)
         all_results.append(result)
         elapsed = time.time() - t0
-        print(f"[parallel] [{tag}] rc={rc}  elapsed={elapsed:.1f}s")
+        logger.info("[%s] rc=%d  elapsed=%.1fs", tag, rc, elapsed)
         if result["finish"]:
             # show head (where 'status' lives) and a tail if it's long
-            print(f"           {result['finish'][:280]}")
+            logger.info("           %s", result['finish'][:280])
             if len(result["finish"]) > 480:
-                print(f"           ...{result['finish'][-200:]}")
+                logger.info("           ...%s", result['finish'][-200:])
         if result["usage"]:
-            print(f"           {result['usage']}")
+            logger.info("           %s", result['usage'])
 
     results = all_results
 
-    print(f"\n[parallel] all done in {time.time()-t0:.1f}s")
-    print("[parallel] summary:")
+    logger.info("all done in %.1fs", time.time()-t0)
+    logger.info("summary:")
     n_ok = n_sim_ok = 0
     for r in results:
         ok = ("status': 'success'" in r["finish"]) or ('"status": "success"' in r["finish"])
@@ -349,8 +354,8 @@ def main() -> int:
         if sim_ok:
             n_sim_ok += 1
         label = "AGENT-SUCCESS" if ok else ("SIM-SUCCESS-but-agent-crashed" if sim_ok else "FAILED/STUCK")
-        print(f"  {tag}: rc={r['rc']}  {label}")
-    print(f"[parallel] {n_ok}/{len(results)} agents reported success "
+        logger.info("  %s: rc=%d  %s", tag, r['rc'], label)
+    logger.info("%d/%d agents reported success "
           f"(+{n_sim_ok - n_ok} more reached libero_terminated=true but agent didn't finish cleanly)")
     return 0 if n_ok == len(results) else 1
 

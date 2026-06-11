@@ -97,7 +97,6 @@ def test_openai_compatible_cerebrum_executes_finish_tool_call():
         tool_result_formatter=lambda result: [
             {"type": "text", "text": json.dumps(result)}
         ],
-        verbose=False,
     )
 
     assert result.finish_result == {

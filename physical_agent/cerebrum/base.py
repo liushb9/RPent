@@ -46,7 +46,6 @@ class Cerebrum(Protocol):
         tool_handler: Callable[[str, dict[str, Any]], dict[str, Any]],
         tool_result_formatter: Callable[[dict[str, Any]], list[dict[str, Any]]],
         max_turns: int = 80,
-        verbose: bool = True,
     ) -> CerebrumResult:
         """Run the multi-turn agent loop until completion or budget.
 
@@ -57,7 +56,6 @@ class Cerebrum(Protocol):
             tool_handler: ``(name, input_dict) -> result_dict``.
             tool_result_formatter: ``result_dict -> list[content_block]``.
             max_turns: Maximum LLM turns before giving up.
-            verbose: Print per-turn diagnostics to stdout.
 
         Returns:
             ``CerebrumResult`` with finish status, conversation transcript,

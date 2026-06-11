@@ -11,6 +11,9 @@ import time
 from typing import Any, Callable
 
 from physical_agent.cerebrum.base import CerebrumResult
+from physical_agent.utils.logging import get_logger
+
+logger = get_logger("cerebrum.openai")
 
 
 class OpenAICompatibleCerebrum:
@@ -43,7 +46,6 @@ class OpenAICompatibleCerebrum:
         tool_handler: Callable[[str, dict[str, Any]], dict[str, Any]],
         tool_result_formatter: Callable[[dict[str, Any]], list[dict[str, Any]]],
         max_turns: int = 80,
-        verbose: bool = True,
     ) -> CerebrumResult:
         """Run a tool-calling chat-completions loop until finish or budget."""
         messages: list[dict[str, Any]] = []
@@ -59,13 +61,11 @@ class OpenAICompatibleCerebrum:
         tools = anthropic_tools_to_openai_tools(tools_spec)
 
         for turn in range(1, max_turns + 1):
-            if verbose:
-                print(f"\n[agent] === turn {turn}/{max_turns} ===")
+            logger.debug("=== turn %d/%d ===", turn, max_turns)
 
             response = self._call_with_retries(
                 tools=tools,
                 messages=messages,
-                verbose=verbose,
             )
             if response is None:
                 last_error = "OpenAI-compatible API call failed after retries"
@@ -82,15 +82,14 @@ class OpenAICompatibleCerebrum:
             finish_reason = _get(choice, "finish_reason")
             assistant_message = _assistant_message_to_dict(message)
 
-            if verbose:
-                self._log_response(
-                    assistant_message,
-                    finish_reason,
-                    input_tokens,
-                    output_tokens,
-                    total_in,
-                    total_out,
-                )
+            self._log_response(
+                assistant_message,
+                finish_reason,
+                input_tokens,
+                output_tokens,
+                total_in,
+                total_out,
+            )
 
             messages.append(assistant_message)
             tool_calls = assistant_message.get("tool_calls") or []
@@ -100,22 +99,18 @@ class OpenAICompatibleCerebrum:
                     tool_calls,
                     tool_handler,
                     tool_result_formatter,
-                    verbose,
                 )
                 n_tool_calls += n
                 messages.extend(tool_messages)
                 messages.extend(image_messages)
                 if finish_result is not None:
-                    if verbose:
-                        print(f"\n[agent] FINISH called: {finish_result}")
+                    logger.info("FINISH called: %s", finish_result)
                     break
             elif finish_reason in ("stop", "end_turn", None):
-                if verbose:
-                    print("[agent] model ended turn without a tool call. Stopping.")
+                logger.info("model ended turn without a tool call. Stopping.")
                 break
             else:
-                if verbose:
-                    print(f"[agent] unexpected finish_reason: {finish_reason}")
+                logger.warning("unexpected finish_reason: %s", finish_reason)
                 break
 
         return CerebrumResult(
@@ -139,7 +134,6 @@ class OpenAICompatibleCerebrum:
         *,
         tools: list[dict[str, Any]],
         messages: list[dict[str, Any]],
-        verbose: bool,
     ):
         last_err = None
         for outer in range(3):
@@ -154,21 +148,18 @@ class OpenAICompatibleCerebrum:
             except Exception as e:  # noqa: BLE001 - SDK-compatible errors vary by provider.
                 last_err = e
                 if not _is_retryable_error(e):
-                    if verbose:
-                        print(
-                            f"[agent] non-retryable API error "
-                            f"'{type(e).__name__}: {e}'"
-                        )
+                    logger.error(
+                        "non-retryable API error '%s: %s'",
+                        type(e).__name__, e,
+                    )
                     raise
                 wait = 10 * (outer + 1)
-                if verbose:
-                    print(
-                        f"[agent] API error '{type(e).__name__}: {e}' "
-                        f"- sleeping {wait}s (retry {outer + 1}/3)"
-                    )
+                logger.warning(
+                    "API error '%s: %s' — sleeping %ds (retry %d/3)",
+                    type(e).__name__, e, wait, outer + 1,
+                )
                 time.sleep(wait)
-        if verbose:
-            print(f"[agent] giving up after 3 retries; last error: {last_err}")
+        logger.error("giving up after 3 retries; last error: %s", last_err)
         return None
 
     @staticmethod
@@ -182,17 +173,17 @@ class OpenAICompatibleCerebrum:
     ) -> None:
         content = assistant_message.get("content")
         if isinstance(content, str) and content.strip():
-            print(f"[openai] {content.strip()}")
+            logger.info("[openai] %s", content.strip())
         for tool_call in assistant_message.get("tool_calls") or []:
             function = tool_call.get("function") or {}
             name = function.get("name", "?")
             arguments = function.get("arguments") or "{}"
             if len(arguments) > 250:
                 arguments = arguments[:250] + "...(+%d)" % (len(arguments) - 250)
-            print(f"[tool->] {name}({arguments})")
-        print(
-            f"[usage] in={input_tokens}  out={output_tokens}  "
-            f"stop={finish_reason}  total_in={total_in}  total_out={total_out}"
+            logger.info("[tool→] %s(%s)", name, arguments)
+        logger.info(
+            "[usage] in=%s  out=%s  stop=%s  total_in=%s  total_out=%s",
+            input_tokens, output_tokens, finish_reason, total_in, total_out,
         )
 
     def _execute_tools(
@@ -200,7 +191,6 @@ class OpenAICompatibleCerebrum:
         tool_calls: list[dict[str, Any]],
         tool_handler: Callable,
         tool_result_formatter: Callable,
-        verbose: bool,
     ):
         tool_messages = []
         image_blocks = []
@@ -221,12 +211,11 @@ class OpenAICompatibleCerebrum:
             if isinstance(result, dict) and result.get("_finish"):
                 finish_result = result
 
-            if verbose:
-                summary = _summarise_result(result)
-                s = json.dumps(summary, default=str)
-                if len(s) > 350:
-                    s = s[:350] + "...(+%d)" % (len(s) - 350)
-                print(f"[tool<-] {name}: {s}")
+            summary = _summarise_result(result)
+            s = json.dumps(summary, default=str)
+            if len(s) > 350:
+                s = s[:350] + "...(+%d)" % (len(s) - 350)
+            logger.info("[tool←] %s: %s", name, s)
 
             tool_text, tool_image_blocks = _format_tool_result_for_openai(
                 result,
