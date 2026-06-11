@@ -260,7 +260,7 @@ def _emergency_save(workdir, output_dir, suite, task, seed, recipe_tag,
             out.mkdir(parents=True, exist_ok=True)
             recipe_path.write_text("\n".join(recipe_lines) + "\n")
             if verbose:
-                logger.debug("[emergency_save] wrote %s (%d cmds)", recipe_path, len(recipe_lines))
+                logger.info("[emergency_save] wrote %s (%d cmds)", recipe_path, len(recipe_lines))
 
     # Build a minimal audit (PRO schema) if missing
     if not audit_path.exists():
@@ -295,7 +295,7 @@ def _emergency_save(workdir, output_dir, suite, task, seed, recipe_tag,
         out.mkdir(parents=True, exist_ok=True)
         audit_path.write_text(json.dumps(record, indent=2, default=str))
         if verbose:
-            logger.debug("[emergency_save] wrote %s (libero_terminated=%s)",
+            logger.info("[emergency_save] wrote %s (libero_terminated=%s)",
                          audit_path, record['libero_terminated'])
 
 
@@ -346,7 +346,7 @@ def run_one_cell(
     if max_episode_steps == 600 and "libero_10" in suite:
         max_episode_steps = 5000
         if verbose:
-            logger.debug("auto-bumped max_episode_steps to 5000 for libero_10")
+            logger.info("auto-bumped max_episode_steps to 5000 for libero_10")
 
     # ---- resolve output directory early so the workdir can live inside it ----
     if output_dir is None:

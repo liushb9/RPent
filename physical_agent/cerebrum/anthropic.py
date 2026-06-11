@@ -53,7 +53,7 @@ class AnthropicCerebrum:
         last_error = None
 
         for turn in range(1, max_turns + 1):
-            logger.debug("=== turn %d/%d ===", turn, max_turns)
+            logger.info("=== turn %d/%d ===", turn, max_turns)
 
             response = self._call_with_retries(
                 system=system_prompt,

@@ -197,7 +197,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 return 2
 
-        logger.debug("step %s: %s", step_id, action)
+        logger.info("step %s: %s", step_id, action)
         if args.dry_run:
             print(json.dumps(clean, default=str))  # structured output to stdout
             continue

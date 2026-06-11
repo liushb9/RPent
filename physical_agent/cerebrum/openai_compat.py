@@ -61,7 +61,7 @@ class OpenAICompatibleCerebrum:
         tools = anthropic_tools_to_openai_tools(tools_spec)
 
         for turn in range(1, max_turns + 1):
-            logger.debug("=== turn %d/%d ===", turn, max_turns)
+            logger.info("=== turn %d/%d ===", turn, max_turns)
 
             response = self._call_with_retries(
                 tools=tools,

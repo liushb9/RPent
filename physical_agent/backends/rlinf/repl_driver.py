@@ -464,15 +464,15 @@ def main():
     cmd_path = os.path.join(args.workdir, "command.json")
     step = 1
     while True:
-        logger.debug("step %d: waiting for %s", step, cmd_path)
+        logger.info("step %d: waiting for %s", step, cmd_path)
         cmd = wait_for_command(cmd_path, timeout_s=3600.0)
         if cmd is None:
             logger.warning("step %d: TIMEOUT", step)
             break
-        logger.debug("step %d: received %s", step, cmd)
+        logger.info("step %d: received %s", step, cmd)
         log = execute(driver, cmd, args.workdir, step)
         dump_state(driver, args.workdir, step, log=log)
-        logger.debug("step %d: done in %ss  result=%s", step, log['elapsed_s'], log['result'])
+        logger.info("step %d: done in %ss  result=%s", step, log['elapsed_s'], log['result'])
         if cmd.get("action") == "exit":
             result = driver.stop_recording_and_save(video_path)
             logger.info("saved %s frames to %s", result['n_frames'], video_path)

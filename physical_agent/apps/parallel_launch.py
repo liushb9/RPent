@@ -277,7 +277,7 @@ def main() -> int:
 
         logger.info("  [%d] %s  GPU=%s  workdir=%s  log=%s", i, tag, cuda, workdir, log_path)
         if args.dry_run:
-            logger.debug("      cmd: %s", ' '.join(cmd))
+            logger.info("      cmd: %s", ' '.join(cmd))
             continue
 
         log_f = open(log_path, "w")
