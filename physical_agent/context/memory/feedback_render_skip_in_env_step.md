@@ -15,7 +15,7 @@ The driver crash at ~20 commands wasn't Pi0 chunks — it was robosuite's per-en
 3. `rlinf/envs/venv/venv.py` SubprocEnvWorker: new `env_call(method, args, kwargs, target='robosuite')`.
 4. `rlinf/envs/libero/libero_env.py` LiberoEnv: new `set_image_render_enabled(enabled)` → broadcasts `modify_observable('agentview_image'/'robot0_eye_in_hand_image', 'enabled', flag)` to all workers.
 5. `rlinf/envs/libero/libero_env.py` `_extract_image_and_state`: cache last good image; substitute when obs lacks image keys.
-6. `physicalagent/primitives/interactive_driver.py` `execute()`: pre-primitive toggle (OSC primitives → disable, pi0_pick → enable). No post-primitive refresh step (robosuite's first sample after re-enable returns degenerate (1,1,3) float64).
+6. `physicalagent/backends/rlinf/repl_driver.py` `execute()`: pre-primitive toggle (OSC primitives → disable, pi0_pick → enable). No post-primitive refresh step (robosuite's first sample after re-enable returns degenerate (1,1,3) float64).
 7. `interactive_driver.py` `dump_state()`: fallback to LiberoEnv._cached_full_image when render_agentview returns bad shape/dtype.
 
 **Trade-off — stale image**: when in OSC-only sequence, `images/image_NN.png` stays at last pi0_pick frame (or initial reset). LLM-visual debugging sees pre-OSC scene, not post-OSC. For most cases (move-then-release-then-look) this is fine; for "tweak then look" debugging it's confusing. Document in audit notes when reviewing.

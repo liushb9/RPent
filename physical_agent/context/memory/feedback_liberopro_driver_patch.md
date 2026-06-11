@@ -7,7 +7,7 @@ metadata:
   originSessionId: 23bda317-5513-4ade-ae34-7d3f3988aeef
 ---
 
-In `physicalagent/primitives/interactive_driver.py`, `make_env` originally did `from libero.libero.benchmark import get_benchmark`. That registry has no PRO suites — `get_benchmark('libero_spatial_task')` raises `KeyError` even with `LIBERO_TYPE=pro`.
+In `physicalagent/backends/rlinf/repl_driver.py`, `make_env` originally did `from libero.libero.benchmark import get_benchmark`. That registry has no PRO suites — `get_benchmark('libero_spatial_task')` raises `KeyError` even with `LIBERO_TYPE=pro`.
 
 Fix (applied 2026-05-20):
 ```python

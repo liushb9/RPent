@@ -7,7 +7,7 @@ metadata:
   originSessionId: 0074d341-bdcd-41b6-b40e-036b75648dc3
 ---
 
-When iterating in `physicalagent/primitives/interactive_driver.py`, calling
+When iterating in `physicalagent/backends/rlinf/repl_driver.py`, calling
 `pi0_pick` with `max_chunks >= 50` causes the libero env worker subprocess to die
 with `EOFError` (parent_remote.recv inside `venv.py`) and the renderer with
 `EGLError(err=EGL_NOT_INITIALIZED, baseOperation=eglMakeCurrent)`. The driver

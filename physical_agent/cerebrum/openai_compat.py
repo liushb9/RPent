@@ -414,7 +414,7 @@ def _summarise_result(result: dict) -> dict:
         }
     if "log" in result:
         log = result["log"]
-        if isinstance(log, dict) and "result" in log:
+        if isinstance(log, dict) and isinstance(log.get("result"), dict):
             summary["log_result_keys"] = list(log["result"].keys())
     return summary
 

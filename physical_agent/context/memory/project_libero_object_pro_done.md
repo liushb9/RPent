@@ -7,12 +7,6 @@ metadata:
   originSessionId: 796fbb81-ebc3-435f-9308-413943fa0320
 ---
 
-30/30 libero_object PRO hybrid runs (t0–t9 × {_task, _swap, _lan}, seed 0)
-strict-passed and audited at
-`physicalagent/primitives/workspace_pro/results_object_pert/` — see
-`REPORT_object_t0_t9.md` there. Pi0 fullshot baselines (40 cells incl. base)
-launched in background on GPU 1 via `run_baselines_object.sh`.
-
 **Why:** Extending the PRO 4-cell coverage from libero_spatial (already
 done) to libero_object. All 10 tasks now done.
 
