@@ -324,6 +324,7 @@ def run_one_cell(
     libero_type: str | None = None,
     cerebrum_type: str = "anthropic",
     openai_compat_supports_images: bool | None = None,
+    thinking: bool = False,
     claude_code_timeout_s: int | None = None,
     claude_code_max_budget_usd: float | None = None,
     codex_timeout_s: int | None = None,
@@ -383,6 +384,7 @@ def run_one_cell(
             client=client,
             model=model or get_anthropic_model(),
             max_tokens=max_tokens,
+            thinking=thinking,
         )
     elif cerebrum_type == "openai_compat":
         api_key = api_key or get_openai_compat_api_key()
@@ -410,6 +412,7 @@ def run_one_cell(
             model=model or get_openai_compat_model(),
             max_tokens=max_tokens,
             supports_images=supports_images,
+            thinking=thinking,
         )
     elif cerebrum_type == "claude_code":
         cc_timeout_s = claude_code_timeout_s
@@ -590,6 +593,9 @@ def _build_argparser() -> argparse.ArgumentParser:
                     help="LLM backend: anthropic | openai_compat | claude_code | codex.")
     ap.add_argument("--openai_compat_no_images", action="store_true",
                     help="Do not send tool-result images to an openai_compat model.")
+    ap.add_argument("--thinking", action="store_true",
+                    help="Enable extended thinking / reasoning for anthropic and "
+                         "openai_compat backends (no-op for claude_code/codex).")
     ap.add_argument("--claude_code_timeout_s", type=int, default=None,
                     help="Wall-clock cap for claude -p. Defaults to CELL_TIMEOUT_S, "
                          "or 1200 in --perception mode / 600 otherwise.")
@@ -651,6 +657,7 @@ def main() -> int:
         libero_type=args.libero_type,
         cerebrum_type=args.cerebrum,
         openai_compat_supports_images=not args.openai_compat_no_images,
+        thinking=args.thinking,
         claude_code_timeout_s=args.claude_code_timeout_s,
         claude_code_max_budget_usd=args.claude_code_max_budget_usd,
         codex_timeout_s=args.codex_timeout_s,

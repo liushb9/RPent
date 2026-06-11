@@ -28,9 +28,21 @@ class AnthropicCerebrum:
         client: anthropic.Anthropic,
         model: str,
         max_tokens: int = 4096,
+        *,
+        thinking: bool = False,
+        thinking_budget_tokens: int = 4096,
     ):
         self._client = client
         self._model = model
+        self._thinking = bool(thinking)
+        self._thinking_budget = int(thinking_budget_tokens)
+        if self._thinking and max_tokens <= self._thinking_budget:
+            new_max = self._thinking_budget + 1024
+            logger.warning(
+                "max_tokens=%d <= thinking budget_tokens=%d; bumping max_tokens to %d",
+                max_tokens, self._thinking_budget, new_max,
+            )
+            max_tokens = new_max
         self._max_tokens = max_tokens
 
     # ------------------------------------------------------------------
@@ -128,6 +140,12 @@ class AnthropicCerebrum:
         messages: list[dict],
     ):
         last_err = None
+        extra_kwargs: dict[str, Any] = {}
+        if self._thinking:
+            extra_kwargs["thinking"] = {
+                "type": "enabled",
+                "budget_tokens": self._thinking_budget,
+            }
         for outer in range(3):
             try:
                 return self._client.messages.create(
@@ -136,6 +154,7 @@ class AnthropicCerebrum:
                     system=system,
                     tools=tools,
                     messages=messages,
+                    **extra_kwargs,
                 )
             except (
                 anthropic.APIConnectionError,
@@ -165,6 +184,14 @@ class AnthropicCerebrum:
         for block in response.content:
             if block.type == "text" and block.text.strip():
                 logger.info("[claude] %s", block.text.strip())
+            elif block.type == "thinking":
+                text = (getattr(block, "thinking", "") or "").strip()
+                if text:
+                    if len(text) > 500:
+                        text = text[:500] + "...(+%d)" % (len(text) - 500)
+                    logger.info("[thinking] %s", text)
+            elif block.type == "redacted_thinking":
+                logger.info("[thinking] <redacted>")
             elif block.type == "tool_use":
                 s = json.dumps(block.input, default=str)
                 if len(s) > 250:

@@ -99,6 +99,7 @@ def _runner_cmd(
     claude_code_max_budget_usd: float | None,
     codex_timeout_s: int | None,
     openai_compat_no_images: bool,
+    thinking: bool,
 ) -> list[str]:
     cmd = [
         sys.executable,
@@ -131,6 +132,8 @@ def _runner_cmd(
     # Do not pass API keys on argv; main() injects them through the child env.
     if openai_compat_no_images:
         cmd += ["--openai_compat_no_images"]
+    if thinking:
+        cmd += ["--thinking"]
     return cmd
 
 
@@ -178,6 +181,9 @@ def main() -> int:
                     help="Wall-clock cap for codex exec cells. Defaults in runner.py.")
     ap.add_argument("--openai_compat_no_images", action="store_true",
                     help="Do not send tool-result images to an openai_compat model.")
+    ap.add_argument("--thinking", action="store_true",
+                    help="Enable extended thinking / reasoning for anthropic and "
+                         "openai_compat backends (no-op for claude_code/codex).")
     ap.add_argument("--dry_run", action="store_true")
     args = ap.parse_args()
 
@@ -273,6 +279,7 @@ def main() -> int:
             claude_code_max_budget_usd=args.claude_code_max_budget_usd,
             codex_timeout_s=args.codex_timeout_s,
             openai_compat_no_images=args.openai_compat_no_images,
+            thinking=args.thinking,
         )
 
         logger.info("  [%d] %s  GPU=%s  workdir=%s  log=%s", i, tag, cuda, workdir, log_path)

@@ -26,12 +26,16 @@ class OpenAICompatibleCerebrum:
         max_tokens: int = 4096,
         *,
         supports_images: bool = True,
+        thinking: bool = False,
+        reasoning_effort: str = "xhigh",
     ):
         """Create a backend around a pre-configured OpenAI SDK client."""
         self._client = client
         self._model = model
         self._max_tokens = max_tokens
         self._supports_images = supports_images
+        self._thinking = bool(thinking)
+        self._reasoning_effort = reasoning_effort
 
     # ------------------------------------------------------------------
     # Cerebrum protocol
@@ -81,6 +85,7 @@ class OpenAICompatibleCerebrum:
             message = _get(choice, "message")
             finish_reason = _get(choice, "finish_reason")
             assistant_message = _assistant_message_to_dict(message)
+            reasoning_text = _get(message, "reasoning_content")
 
             self._log_response(
                 assistant_message,
@@ -89,6 +94,7 @@ class OpenAICompatibleCerebrum:
                 output_tokens,
                 total_in,
                 total_out,
+                reasoning_text=reasoning_text,
             )
 
             messages.append(assistant_message)
@@ -136,6 +142,9 @@ class OpenAICompatibleCerebrum:
         messages: list[dict[str, Any]],
     ):
         last_err = None
+        extra_kwargs: dict[str, Any] = {}
+        if self._thinking:
+            extra_kwargs["reasoning_effort"] = self._reasoning_effort
         for outer in range(3):
             try:
                 return self._client.chat.completions.create(
@@ -144,6 +153,7 @@ class OpenAICompatibleCerebrum:
                     tools=tools,
                     tool_choice="auto",
                     max_tokens=self._max_tokens,
+                    **extra_kwargs,
                 )
             except Exception as e:  # noqa: BLE001 - SDK-compatible errors vary by provider.
                 last_err = e
@@ -170,10 +180,17 @@ class OpenAICompatibleCerebrum:
         output_tokens: int,
         total_in: int,
         total_out: int,
+        *,
+        reasoning_text: Any = None,
     ) -> None:
         content = assistant_message.get("content")
         if isinstance(content, str) and content.strip():
             logger.info("[openai] %s", content.strip())
+        if isinstance(reasoning_text, str) and reasoning_text.strip():
+            text = reasoning_text.strip()
+            if len(text) > 500:
+                text = text[:500] + "...(+%d)" % (len(text) - 500)
+            logger.info("[thinking] %s", text)
         for tool_call in assistant_message.get("tool_calls") or []:
             function = tool_call.get("function") or {}
             name = function.get("name", "?")
