@@ -36,7 +36,7 @@ from pathlib import Path
 os.environ.setdefault("MUJOCO_GL", "egl")
 os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
 
-from physical_agent.transport.socket_transport import (
+from physical_agent.driver_client.socket import (
     TransportTCPServer,
 )
 from physical_agent.utils.config import get_default_workdir_prefix, get_repo_root
@@ -485,17 +485,6 @@ class DriverTransportDispatcher:
                     f"step {step} not present in states.json (len={len(states)})"
                 )
             return {"step": step, "step_data": states[step]}
-
-        if method == "get_image_paths":
-            step = int(params.get("step"))
-            image_path = self._image_path(step, "agent")
-            image_cam_path = self._image_path(step, "camera")
-            result = {}
-            if os.path.exists(image_path):
-                result["image"] = image_path
-            if os.path.exists(image_cam_path):
-                result["image_cam"] = image_cam_path
-            return result
 
         if method == "get_image":
             step = int(params.get("step"))

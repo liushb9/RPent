@@ -68,7 +68,7 @@ from physical_agent.tools.frontend import (  # noqa: E402
     set_workdir as tools_set_workdir,
     tool_result_to_content_blocks,
 )
-from physical_agent.transport import create_driver_client, set_socket_endpoint  # noqa: E402
+from physical_agent.driver_client import create_driver_client, set_socket_endpoint  # noqa: E402
 
 
 def _pipe_driver_output(

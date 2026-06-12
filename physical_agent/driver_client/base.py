@@ -1,7 +1,6 @@
 """Client interface for the interactive driver boundary."""
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, Protocol
 
 
@@ -22,19 +21,6 @@ class DriverClient(Protocol):
     ) -> dict:
         """Send one command to the driver and wait for the resulting step."""
 
-    def request(
-        self,
-        method: str,
-        params: dict | None = None,
-        *,
-        timeout_s: float | None = None,
-    ) -> dict:
-        """Send one low-level request and return a JSON-serializable result.
-
-        This is kept for compatibility and for protocol-specific calls. Prefer
-        the typed methods above/below in tool code.
-        """
-
     def load_states(self) -> list:
         """Return the parsed driver state trace."""
 
@@ -51,9 +37,6 @@ class DriverClient(Protocol):
         images_cam/image_cam_NN.png.
         """
 
-    def get_image_paths(self, step: int) -> dict[str, Path | str]:
-        """Return local image artifact paths for compatibility, when available."""
-
     def load_camera_meta(self) -> dict[str, Any]:
         """Return camera calibration metadata."""
 
@@ -62,7 +45,3 @@ class DriverClient(Protocol):
 
     def close(self) -> None:
         """Release any client-side transport resources."""
-
-
-# Compatibility name from the command-only abstraction.
-TransportClient = DriverClient

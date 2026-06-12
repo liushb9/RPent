@@ -11,7 +11,7 @@ import json
 import os
 from pathlib import Path
 
-from physical_agent.transport import DriverClient, FileDriverClient
+from physical_agent.driver_client import DriverClient, FileDriverClient
 from physical_agent.utils.config import get_default_workdir_prefix, get_repo_root
 
 REPO_ROOT = get_repo_root()
@@ -22,8 +22,6 @@ WORKDIR = Path(
     )
 )
 DRIVER_CLIENT: DriverClient = FileDriverClient(WORKDIR)
-# Compatibility name used by existing tests/callers.
-TRANSPORT = DRIVER_CLIENT
 
 
 def _workdir_desc() -> str:
@@ -34,22 +32,15 @@ def set_workdir(path: str | os.PathLike) -> None:
     """Override the driver working directory used by view_driver_state /
     send_command. Call BEFORE the agent loop starts so each parallel
     worker has its own workdir."""
-    global WORKDIR, DRIVER_CLIENT, TRANSPORT
+    global WORKDIR, DRIVER_CLIENT
     WORKDIR = Path(path)
     DRIVER_CLIENT = FileDriverClient(WORKDIR)
-    TRANSPORT = DRIVER_CLIENT
-
-
-def set_transport(client: DriverClient) -> None:
-    """Override the process-to-driver client used by agent tools."""
-    global DRIVER_CLIENT, TRANSPORT
-    DRIVER_CLIENT = client
-    TRANSPORT = client
 
 
 def set_driver_client(client: DriverClient) -> None:
     """Override the driver client used by agent tools."""
-    set_transport(client)
+    global DRIVER_CLIENT
+    DRIVER_CLIENT = client
 
 
 # ---------------------------------------------------------------------------

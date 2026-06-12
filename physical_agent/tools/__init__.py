@@ -7,7 +7,6 @@ from physical_agent.tools.frontend import (  # noqa: F401
     execute_tool,
     get_tools_spec,
     set_driver_client,
-    set_transport,
     set_workdir,
     tool_result_to_content_blocks,
     view_driver_state,

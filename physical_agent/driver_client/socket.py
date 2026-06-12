@@ -1,14 +1,13 @@
 """JSON-over-TCP transport for the interactive driver."""
 from __future__ import annotations
 
+import base64
 import json
 import socket
 import socketserver
 import threading
 import uuid
-import base64
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
 
@@ -30,7 +29,7 @@ class SocketDriverClient:
         self.port = int(port)
         self.connect_timeout_s = connect_timeout_s
 
-    def request(
+    def _request(
         self,
         method: str,
         params: dict[str, Any] | None = None,
@@ -86,21 +85,21 @@ class SocketDriverClient:
         params: dict[str, Any] = {"command": command}
         if current_step is not None:
             params["current_step"] = int(current_step)
-        return self.request("send_command", params, timeout_s=timeout_s)
+        return self._request("send_command", params, timeout_s=timeout_s)
 
     def load_states(self) -> list:
-        result = self.request("get_states")
+        result = self._request("get_states")
         states = result.get("states")
         return states if isinstance(states, list) else []
 
     def latest_step(self) -> int | None:
-        result = self.request("get_latest_step")
+        result = self._request("get_latest_step")
         step = result.get("step")
         return int(step) if step is not None else None
 
     def load_step(self, step: int | None = None) -> dict:
         params = {} if step is None else {"step": int(step)}
-        result = self.request("get_step", params)
+        result = self._request("get_step", params)
         if result.get("error"):
             raise IndexError(result["error"])
         entry = result.get("step_data")
@@ -108,18 +107,8 @@ class SocketDriverClient:
             raise ValueError("socket transport returned invalid step data")
         return entry
 
-    def get_image_paths(self, step: int) -> dict[str, Path | str]:
-        result = self.request("get_image_paths", {"step": int(step)})
-        if result.get("error"):
-            return {}
-        return {
-            key: value
-            for key, value in result.items()
-            if key in {"image", "image_cam"} and value
-        }
-
     def load_image(self, step: int, kind: str = "agent") -> bytes | None:
-        result = self.request("get_image", {"step": int(step), "kind": kind})
+        result = self._request("get_image", {"step": int(step), "kind": kind})
         if result.get("error"):
             return None
         data = result.get("data")
@@ -130,7 +119,7 @@ class SocketDriverClient:
         return base64.b64decode(data.encode("ascii"))
 
     def load_camera_meta(self) -> dict[str, Any]:
-        result = self.request("get_camera_meta")
+        result = self._request("get_camera_meta")
         if result.get("error"):
             raise FileNotFoundError(result["error"])
         meta = result.get("camera_meta")
@@ -141,7 +130,7 @@ class SocketDriverClient:
     def load_depth(self, step: int) -> Any:
         import numpy as np
 
-        result = self.request("get_depth", {"step": int(step)})
+        result = self._request("get_depth", {"step": int(step)})
         if result.get("error"):
             raise FileNotFoundError(result["error"])
         if "depth" not in result:
@@ -150,10 +139,6 @@ class SocketDriverClient:
 
     def close(self) -> None:
         return None
-
-
-# Compatibility name from the command-only abstraction.
-SocketTransportClient = SocketDriverClient
 
 
 class _RequestHandler(socketserver.StreamRequestHandler):

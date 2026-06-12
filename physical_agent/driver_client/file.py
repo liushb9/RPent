@@ -53,17 +53,6 @@ class FileDriverClient:
             raise ValueError(f"states.json step {nn} is not an object")
         return entry
 
-    def get_image_paths(self, step: int) -> dict[str, Path]:
-        nn_str = f"{step:02d}"
-        image_path = self.workdir / "images" / f"image_{nn_str}.png"
-        image_cam_path = self.workdir / "images_cam" / f"image_cam_{nn_str}.png"
-        paths: dict[str, Path] = {}
-        if image_path.exists():
-            paths["image"] = image_path
-        if image_cam_path.exists():
-            paths["image_cam"] = image_cam_path
-        return paths
-
     def load_image(self, step: int, kind: str = "agent") -> bytes | None:
         nn_str = f"{int(step):02d}"
         if kind == "agent":
@@ -87,32 +76,6 @@ class FileDriverClient:
 
         depth_path = self.workdir / "depths" / f"depth_{step:02d}.npy"
         return np.load(depth_path)
-
-    def request(
-        self,
-        method: str,
-        params: dict | None = None,
-        *,
-        timeout_s: float | None = None,
-    ) -> dict:
-        """Perform one file-transport request.
-
-        File transport owns the driver command and artifact boundary. Tool-level
-        interpretation stays in ``tools/frontend.py``.
-        """
-        params = params or {}
-        if method != "send_command":
-            return {"error": f"file transport does not handle method: {method}"}
-        current_step = params.get("current_step")
-        if current_step is None:
-            current_step = self.latest_step()
-        if current_step is None:
-            return {"error": "no states.json (or empty); driver not ready"}
-        return self.send_command(
-            params.get("command"),
-            current_step=int(current_step),
-            timeout_s=timeout_s if timeout_s is not None else 600.0,
-        )
 
     def send_command(
         self,
@@ -160,7 +123,3 @@ class FileDriverClient:
 
     def close(self) -> None:
         return None
-
-
-# Compatibility name from the command-only abstraction.
-FileTransportClient = FileDriverClient

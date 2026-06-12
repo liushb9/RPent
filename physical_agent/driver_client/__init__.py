@@ -1,16 +1,9 @@
-"""Driver clients for the agent/tool process to driver process boundary.
-
-The package name is kept as ``transport`` for compatibility, but the primary
-abstraction is ``DriverClient``: command delivery plus driver artifact access.
-"""
+"""Driver clients for the agent/tool process to driver process boundary."""
 from pathlib import Path
 
-from physical_agent.transport.base import DriverClient, TransportClient
-from physical_agent.transport.file import FileDriverClient, FileTransportClient
-from physical_agent.transport.socket_transport import (
-    SocketDriverClient,
-    SocketTransportClient,
-)
+from physical_agent.driver_client.base import DriverClient
+from physical_agent.driver_client.file import FileDriverClient
+from physical_agent.driver_client.socket import SocketDriverClient
 
 _SOCKET_ENDPOINTS: dict[str, tuple[str, int]] = {}
 
@@ -34,19 +27,10 @@ def create_driver_client(kind: str, workdir: str | Path) -> DriverClient:
     raise ValueError(f"unknown transport kind: {kind}")
 
 
-def create_transport_client(kind: str, workdir: str | Path) -> DriverClient:
-    """Compatibility wrapper for the old transport factory name."""
-    return create_driver_client(kind, workdir)
-
-
 __all__ = [
     "DriverClient",
     "FileDriverClient",
-    "FileTransportClient",
     "SocketDriverClient",
-    "SocketTransportClient",
-    "TransportClient",
     "create_driver_client",
-    "create_transport_client",
     "set_socket_endpoint",
 ]
