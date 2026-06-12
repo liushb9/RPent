@@ -41,7 +41,6 @@ from physical_agent.utils.config import (
 )
 
 REPO_ROOT = get_repo_root()
-DEFAULT_DRIVER_SCRIPT = str(get_repl_driver_script())
 
 from physical_agent.cerebrum.adapters.anthropic import AnthropicAdapter  # noqa: E402
 from physical_agent.cerebrum.adapters.openai_compat import OpenAICompatibleAdapter  # noqa: E402

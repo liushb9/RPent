@@ -10,5 +10,4 @@ from physical_agent.tools.frontend import (  # noqa: F401
     set_workdir,
     tool_result_to_content_blocks,
     view_driver_state,
-    view_repl_state,
 )

@@ -15,12 +15,7 @@ from physical_agent.driver_client import DriverClient, FileDriverClient
 from physical_agent.utils.config import get_default_workdir_prefix, get_repo_root
 
 REPO_ROOT = get_repo_root()
-WORKDIR = Path(
-    os.environ.get(
-        "HYBRID_DRIVER_WORKDIR",
-        os.environ.get("HYBRID_REPL_WORKDIR", get_default_workdir_prefix()),
-    )
-)
+WORKDIR = Path(os.environ.get("HYBRID_DRIVER_WORKDIR", get_default_workdir_prefix()))
 DRIVER_CLIENT: DriverClient = FileDriverClient(WORKDIR)
 
 
@@ -466,15 +461,11 @@ TOOL_HANDLERS = {
     "write_text_file": write_text_file,
     "list_dir": list_dir,
     "view_driver_state": view_driver_state,
-    "view_repl_state": view_driver_state,
     "send_command": send_command,
     "view_camera_meta": view_camera_meta,
     "back_project": back_project,
     "finish": finish,
 }
-
-# Compatibility function name from the earlier REPL tool.
-view_repl_state = view_driver_state
 
 
 def get_tools_spec() -> list[dict]:
@@ -530,9 +521,6 @@ def tool_result_to_content_blocks(result):
     result_for_text = dict(result)
     image = result_for_text.pop("_image_bytes", None)
     image_cam = result_for_text.pop("_image_cam_bytes", None)
-    # Legacy private path fields are still supported for external callers.
-    image_path = result_for_text.pop("_image_path", None)
-    image_cam_path = result_for_text.pop("_image_cam_path", None)
     text = json.dumps(result_for_text, indent=2, default=str)
     if len(text) > MAX_TEXT_BYTES_IN_RESULT:
         text = text[:MAX_TEXT_BYTES_IN_RESULT] + "\n[truncated]"
@@ -550,26 +538,8 @@ def tool_result_to_content_blocks(result):
             },
         })
 
-    def _add_image(path):
-        p = Path(path)
-        if p.exists():
-            with open(p, "rb") as f:
-                data = base64.b64encode(f.read()).decode("utf-8")
-            blocks.append({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": "image/png",
-                    "data": data,
-                },
-            })
-
     if image:
         _add_image_bytes(image)
     if image_cam:
         _add_image_bytes(image_cam)
-    if image_path:
-        _add_image(image_path)
-    if image_cam_path:
-        _add_image(image_cam_path)
     return blocks

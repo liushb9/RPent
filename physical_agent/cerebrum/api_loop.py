@@ -128,8 +128,6 @@ def summarise_tool_result(result: Any) -> dict[str, Any]:
             "state",
             "content",
             "log",
-            "_image_path",
-            "_image_cam_path",
             "_image_bytes",
             "_image_cam_bytes",
         )
