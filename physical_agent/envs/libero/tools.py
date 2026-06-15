@@ -11,8 +11,8 @@ This module is RLinf-agnostic: it consumes a minimal :class:`EnvInterface`
 ``deployment/rlinf/repl_driver.py``) can wire in any provider.
 
 The bottom of this module also exports a libero-specific ``TOOLS_SPEC`` /
-``TOOL_HANDLERS`` pair that :mod:`physical_agent.tools.common` merges into
-the agent-facing registry.
+``TOOL_HANDLERS`` pair that :mod:`physical_agent.envs.libero` contributes
+through the environment registry.
 """
 from __future__ import annotations
 
@@ -23,17 +23,20 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-import imageio.v2 as imageio
 import numpy as np
 
-from physical_agent.driver_client import (
-    DriverClient,
-    RemoteEnvProxy,
-)
+from physical_agent.driver_client.base import DriverClient
+from physical_agent.driver_client.proxies import RemoteEnvProxy
 from physical_agent.tools.common import _output_dir_desc, _require_output_dir
 from physical_agent.utils.logging import get_logger
 
 logger = get_logger("libero")
+
+
+def _imageio():
+    import imageio.v2 as imageio
+
+    return imageio
 
 
 class EnvInterface(Protocol):
@@ -186,7 +189,7 @@ class LiberoPrimitiveDriver:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         n = len(self._frames)
         if n > 0:
-            imageio.mimwrite(path, self._frames, fps=fps)
+            _imageio().mimwrite(path, self._frames, fps=fps)
         if not keep_recording:
             self._recording = False
             self._frames = []
@@ -902,7 +905,7 @@ def dump_state(driver: LiberoPrimitiveDriver, output_dir: str, step_idx: int,
             img = np.zeros((128, 128, 3), dtype=np.uint8)
         if img.dtype != np.uint8:
             img = img.astype(np.uint8)
-    imageio.imwrite(os.path.join(images_dir, f"image_{step_idx:02d}.png"), img)
+    _imageio().imwrite(os.path.join(images_dir, f"image_{step_idx:02d}.png"), img)
 
     # --- camera calibration (static for agentview): fetch + dump once ---
     cam_meta = getattr(driver, "_camera_meta", None)
@@ -938,8 +941,10 @@ def dump_state(driver: LiberoPrimitiveDriver, output_dir: str, step_idx: int,
             ci = np.asarray(ci)
             if ci.dtype != np.uint8:
                 ci = ci.astype(np.uint8)
-            imageio.imwrite(os.path.join(images_cam_dir, f"image_cam_{step_idx:02d}.png"),
-                            ci[::-1])
+            _imageio().imwrite(
+                os.path.join(images_cam_dir, f"image_cam_{step_idx:02d}.png"),
+                ci[::-1],
+            )
     except Exception as e:
         logger.warning("image_cam dump failed: %s", e)
 
@@ -992,9 +997,8 @@ def dump_state(driver: LiberoPrimitiveDriver, output_dir: str, step_idx: int,
 # Below this point: TOOLS_SPEC + handlers for the libero primitives that the
 # LLM invokes. Each handler issues ONE primitive against LIBERO_DRIVER (the
 # agent-side ``LiberoPrimitiveDriver``), dumps a new state entry, and returns
-# the new ``view_driver_state(step)`` payload. ``physical_agent.tools.common``
-# imports TOOLS_SPEC / TOOL_HANDLERS from this module and merges them into
-# the registry the runner sees.
+# the new ``view_driver_state(step)`` payload. The LIBERO env spec contributes
+# these schemas and handlers to the agent-facing tool registry.
 
 
 # Wire transport to the driver subprocess (env + model only). Set by
