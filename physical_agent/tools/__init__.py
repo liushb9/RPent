@@ -5,7 +5,6 @@ from physical_agent.tools.common import (  # noqa: F401
     TOOL_HANDLERS,
     execute_tool,
     get_tools_spec,
-    set_output_dir,
     tool_result_to_content_blocks,
 )
 from physical_agent.tools.libero import (  # noqa: F401

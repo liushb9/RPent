@@ -50,7 +50,7 @@ from physical_agent.utils.config import (
     get_openai_compat_api_key,
     get_openai_compat_base_url,
 )
-from physical_agent.utils.logging import get_logger, init_run_logging
+from physical_agent.utils.logging import get_logger, init_output_dir
 
 logger = get_logger("parallel")
 
@@ -218,9 +218,8 @@ def main() -> int:
         return 2
 
     n_devices = len(args.cuda_devices)
-    Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     # Initialise unified logging for this run
-    init_run_logging(args.log_dir)
+    init_output_dir(args.log_dir)
 
     procs: list[tuple[subprocess.Popen, str, str, tuple, int]] = []
     active: list[tuple[subprocess.Popen, str, str, tuple, int]] = []

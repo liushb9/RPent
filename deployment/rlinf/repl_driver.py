@@ -29,7 +29,7 @@ from physical_agent.utils.config import (
     get_repo_root,
     get_rlinf_repo_path,
 )
-from physical_agent.utils.logging import get_logger, init_run_logging
+from physical_agent.utils.logging import get_logger, init_output_dir
 
 logger = get_logger("driver")
 
@@ -258,7 +258,7 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
 
     # Initialise unified logging for this run
-    init_run_logging(args.output_dir)
+    init_output_dir(args.output_dir)
 
     logger.info("task=%d  seed=%d  output_dir=%s", args.task, args.seed, args.output_dir)
 

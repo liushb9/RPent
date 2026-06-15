@@ -16,31 +16,20 @@ import os
 from pathlib import Path
 
 from physical_agent.utils.config import get_repo_root
+from physical_agent.utils.logging import get_output_dir
 
-REPO_ROOT = get_repo_root()
-
-# Per-run output directory. Set by ``set_output_dir()`` before the agent loop
-# starts; every tool function reads/writes under this path. Left as ``None``
-# until set so callers fail fast if they forget.
-OUTPUT_DIR: Path | None = None
 
 
 def _require_output_dir() -> Path:
-    if OUTPUT_DIR is None:
-        raise RuntimeError("set_output_dir() must be called before using tools")
-    return OUTPUT_DIR
+    d = get_output_dir()
+    if d is None:
+        raise RuntimeError("init_output_dir() must be called before using tools")
+    return d
 
 
 def _output_dir_desc() -> str:
-    return str(OUTPUT_DIR) if OUTPUT_DIR is not None else "<unset>"
-
-
-def set_output_dir(path: str | os.PathLike) -> None:
-    """Override the per-run output directory used by all tool handlers.
-    Call BEFORE the agent loop starts so each parallel worker has its
-    own directory."""
-    global OUTPUT_DIR
-    OUTPUT_DIR = Path(path)
+    d = get_output_dir()
+    return str(d) if d is not None else "<unset>"
 
 
 # ---------------------------------------------------------------------------
@@ -105,7 +94,7 @@ TOOLS_SPEC: list[dict] = [
 def _resolve(path: str) -> Path:
     p = Path(path)
     if not p.is_absolute():
-        p = REPO_ROOT / p
+        p = get_repo_root() / p
     return p
 
 

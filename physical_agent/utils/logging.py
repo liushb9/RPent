@@ -5,12 +5,14 @@ import logging
 import sys
 from pathlib import Path
 
+from physical_agent.utils.config import get_repo_root
+
 # All loggers we configure live under this namespace so third-party
 # libraries (httpx, anthropic, urllib3, …) don't bleed into our output.
 _PKG_LOGGER_NAME = "physical_agent"
 
 _log_initialized = False
-_log_dir: Path | None = None
+_output_dir: Path | None = None
 
 
 class _ColourFormatter(logging.Formatter):
@@ -50,12 +52,19 @@ class _StripPkgPrefixFilter(logging.Filter):
         return True
 
 
-def init_run_logging(log_dir: str | Path | None = None) -> None:
-    """Attach stdout and optional file handlers to package loggers."""
-    global _log_initialized, _log_dir
+def init_output_dir(log_dir: str | Path | None = None) -> Path:
+    """Create *log_dir* (defaults to ``<repo>/logs/``), set up logging, and
+    return the resolved path.
+    """
+    global _log_initialized, _output_dir
+
+    if log_dir is None:
+        log_dir = get_repo_root() / "logs"
+    _output_dir = Path(log_dir)
+    _output_dir.mkdir(parents=True, exist_ok=True)
 
     if _log_initialized:
-        return
+        return _output_dir
 
     pkg_logger = logging.getLogger(_PKG_LOGGER_NAME)
     pkg_logger.setLevel(logging.DEBUG)
@@ -74,23 +83,26 @@ def init_run_logging(log_dir: str | Path | None = None) -> None:
     pkg_logger.addHandler(stdout_handler)
 
     # -- file handler (DEBUG and above, timestamped) ---------------------
-    if log_dir is not None:
-        _log_dir = Path(log_dir)
-        _log_dir.mkdir(parents=True, exist_ok=True)
-        file_handler = logging.FileHandler(
-            str(_log_dir / "run.log"), encoding="utf-8"
+    file_handler = logging.FileHandler(
+        str(_output_dir / "run.log"), encoding="utf-8"
+    )
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
         )
-        file_handler.setLevel(logging.DEBUG)
-        file_handler.setFormatter(
-            logging.Formatter(
-                "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-                datefmt="%Y-%m-%d %H:%M:%S",
-            )
-        )
-        file_handler.addFilter(strip_filter)
-        pkg_logger.addHandler(file_handler)
+    )
+    file_handler.addFilter(strip_filter)
+    pkg_logger.addHandler(file_handler)
 
     _log_initialized = True
+    return _output_dir
+
+
+def get_output_dir() -> Path | None:
+    """Return the output directory set by the last ``init_output_dir`` call."""
+    return _output_dir
 
 
 def get_logger(name: str = "") -> logging.Logger:
@@ -98,8 +110,3 @@ def get_logger(name: str = "") -> logging.Logger:
     if name:
         return logging.getLogger(f"{_PKG_LOGGER_NAME}.{name}")
     return logging.getLogger(_PKG_LOGGER_NAME)
-
-
-def get_log_dir() -> Path | None:
-    """Return the log directory set by the last ``init_run_logging`` call."""
-    return _log_dir

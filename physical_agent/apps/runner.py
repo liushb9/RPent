@@ -67,12 +67,10 @@ from physical_agent.tools import (  # noqa: E402
     execute_tool,
     get_tools_spec,
     set_driver_client as tools_set_driver_client,
-    set_output_dir as tools_set_output_dir,
     stop_recording_and_save as tools_stop_recording_and_save,
     tool_result_to_content_blocks,
 )
-from physical_agent.utils import make_log_dir  # noqa: E402
-from physical_agent.utils.logging import get_logger, init_run_logging  # noqa: E402
+from physical_agent.utils.logging import get_logger, init_output_dir  # noqa: E402
 
 logger = get_logger("agent")
 
@@ -460,16 +458,7 @@ def run_one_cell(
     # Everything for the run lands under this single directory: driver
     # artifacts (images/, depths/, states.json, ...) and agent outputs
     # (recipe/audit/transcript) sit side by side.
-    if output_dir is None:
-        output_dir = str(make_log_dir(suite=suite, task=task, seed=seed, repo_root=REPO_ROOT))
-    else:
-        Path(output_dir).mkdir(parents=True, exist_ok=True)
-
-    # Initialise unified logging for this run
-    init_run_logging(output_dir)
-
-    # Point the agent's tools at the per-run output dir BEFORE the loop starts.
-    tools_set_output_dir(output_dir)
+    output_dir = init_output_dir(output_dir)
 
     if cerebrum_type == "anthropic":
         api_key = api_key or get_anthropic_api_key()

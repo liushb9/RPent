@@ -17,6 +17,7 @@ from typing import Any
 
 from physical_agent.driver_client import SocketDriverClient
 from physical_agent.driver_client.vla_client import VLAClient
+from physical_agent.utils.logging import init_output_dir
 from physical_agent import tools as agent_tools
 
 SERVER_NAME = "physical_agent"
@@ -192,7 +193,7 @@ def main(argv: list[str] | None = None) -> int:
         os.chdir(args.repo_root)
         if str(Path(args.repo_root)) not in sys.path:
             sys.path.insert(0, str(Path(args.repo_root)))
-    agent_tools.set_output_dir(args.output_dir)
+    init_output_dir(args.output_dir)
     if args.transport_port <= 0:
         raise ValueError("--transport-port must be > 0")
     agent_tools.set_driver_client(
