@@ -144,7 +144,12 @@ class VLAClient:
         resp = self._client.post(f"{self._base_url}/predict", json=body)
         if resp.status_code != 200:
             try:
-                detail = resp.json().get("error")
+                payload = resp.json()
+                detail = (
+                    payload.get("detail")
+                    or payload.get("error")
+                    or payload
+                )
             except Exception:
                 detail = resp.text
             raise RuntimeError(

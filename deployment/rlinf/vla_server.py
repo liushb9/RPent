@@ -45,10 +45,23 @@ import imageio.v2 as imageio  # noqa: E402
 import numpy as np  # noqa: E402
 import torch  # noqa: E402
 from omegaconf import OmegaConf  # noqa: E402
+from pydantic import BaseModel  # noqa: E402
 
 from physical_agent.utils.logging import get_logger  # noqa: E402
 
 logger = get_logger("vla_server")
+
+
+class ImageBlock(BaseModel):
+    format: str = "png"
+    data: str
+
+
+class PredictRequest(BaseModel):
+    instruction: str = ""
+    images: dict[str, ImageBlock]
+    state: list[list[float]]
+    mode: str = "eval"
 
 
 CHECKPOINT_PATH = get_pi05_checkpoint_path()
@@ -163,21 +176,20 @@ def _build_env_obs(req: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_app() -> Any:
-    from fastapi import FastAPI, HTTPException
+    from fastapi import FastAPI, HTTPException, Request
+    from fastapi.exceptions import RequestValidationError
     from fastapi.responses import JSONResponse
-    from pydantic import BaseModel, Field
 
     app = FastAPI(title="Pi0.5 VLA")
 
-    class ImageBlock(BaseModel):
-        format: str = "png"
-        data: str
-
-    class PredictRequest(BaseModel):
-        instruction: str = ""
-        images: dict[str, ImageBlock]
-        state: list[list[float]]
-        mode: str = "eval"
+    @app.exception_handler(RequestValidationError)
+    async def _on_validation_error(_request: Request, exc: RequestValidationError):
+        errors = exc.errors()
+        logger.warning("/predict request validation failed: %s", errors)
+        return JSONResponse(
+            {"error": "request validation failed", "detail": errors},
+            status_code=422,
+        )
 
     @app.get("/healthz")
     def healthz():
