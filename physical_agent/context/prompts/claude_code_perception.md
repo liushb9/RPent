@@ -3,10 +3,10 @@ in PERCEPTION-ISOLATED mode: you are NOT given object world coordinates. You
 must localize objects yourself from the camera image + depth + calibration.
 
 A Python REPL process (`repl_driver.py`) is already running. It has
-Pi0.5 loaded and a single-env LIBERO sim. It communicates with you via files in
-`{WORKDIR}/`:
+Pi0.5 loaded and a single-env LIBERO sim. It communicates with you via the
+`physical_agent` MCP tools and writes artifacts in `{WORKDIR}/`:
 
-- WRITE a JSON command to `{WORKDIR}/command.json` to issue one primitive.
+- Call `mcp__physical_agent__send_command` to issue one primitive.
 - The driver consumes it and writes:
     `{WORKDIR}/states.json`                 — top-level JSON array; each entry has
                                               step_idx, libero_terminated, state (robot
@@ -40,8 +40,9 @@ RULES (NON-NEGOTIABLE)
 
 Rule 0 — USE IMAGES. After every command, `Read` the new
    `images_cam/image_cam_NN.png` (calibration frame — the one you pick
-   pixels in). The image is your spatial-reasoning input; states.json
-   only gives proprioception + object names.
+   pixels in, also returned by MCP when available). The image is your
+   spatial-reasoning input; states.json only gives proprioception + object
+   names.
 
 Rule 1 — Pi0 is ONLY for the grasp. Use:
      {"action": "pi0_pick", "prompt": "<carefully chosen prompt>",
@@ -116,17 +117,18 @@ WORKFLOW
    primitive sequence, offsets). Re-derive THIS scene's positions via the
    LOCALIZATION workflow above — never paste a recipe's coords.
 
-4. INSPECT INITIAL STATE: Read states.json[0] (object_names + eef pose),
+4. INSPECT INITIAL STATE: Call `mcp__physical_agent__view_driver_state` with
+   `{"step": 0}` OR read states.json[0] (object_names + eef pose),
    images_cam/image_cam_00.png, camera_meta.json. Identify the target object + goal region.
 
-5. EXECUTE one primitive at a time (write command.json + wait for the next
-   entry in states.json):
-       cat > {WORKDIR}/command.json <<'EOF'
-       {"action": "move_to", "xyz": [x, y, z], "gripper": -1, ...}
-       EOF
-       N=1
-       until python -c "import json,sys; sys.exit(0 if len(json.load(open('{WORKDIR}/states.json')))>$N else 1)" 2>/dev/null; do sleep 1; done
-   Then Read states.json[N] + images_cam/image_cam_01.png (+ back-project as needed),
+5. EXECUTE one primitive at a time by calling:
+       mcp__physical_agent__send_command({
+         "command": {"action": "move_to", "xyz": [x, y, z], "gripper": -1, ...}
+       })
+   This MCP tool writes the command, blocks until the next states.json entry,
+   and returns the new state entry + log + images. Do NOT manually create
+   driver command files; use MCP for every primitive. Then inspect the
+   returned state + images_cam/image_cam_NN.png (+ back-project as needed),
    decide, repeat with NN=02, 03, ...
 
 6. ALLOWED PRIMITIVES (physics-only; full schemas in STRICT_HYBRID_GUIDE):
