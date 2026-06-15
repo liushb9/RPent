@@ -23,6 +23,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+import imageio.v2 as imageio
 import numpy as np
 
 from physical_agent.driver_client.base import DriverClient
@@ -31,12 +32,6 @@ from physical_agent.tools.common import _output_dir_desc, _require_output_dir
 from physical_agent.utils.logging import get_logger
 
 logger = get_logger("libero")
-
-
-def _imageio():
-    import imageio.v2 as imageio
-
-    return imageio
 
 
 class EnvInterface(Protocol):
@@ -189,7 +184,7 @@ class LiberoPrimitiveDriver:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         n = len(self._frames)
         if n > 0:
-            _imageio().mimwrite(path, self._frames, fps=fps)
+            imageio.mimwrite(path, self._frames, fps=fps)
         if not keep_recording:
             self._recording = False
             self._frames = []
@@ -905,7 +900,7 @@ def dump_state(driver: LiberoPrimitiveDriver, output_dir: str, step_idx: int,
             img = np.zeros((128, 128, 3), dtype=np.uint8)
         if img.dtype != np.uint8:
             img = img.astype(np.uint8)
-    _imageio().imwrite(os.path.join(images_dir, f"image_{step_idx:02d}.png"), img)
+    imageio.imwrite(os.path.join(images_dir, f"image_{step_idx:02d}.png"), img)
 
     # --- camera calibration (static for agentview): fetch + dump once ---
     cam_meta = getattr(driver, "_camera_meta", None)
@@ -941,7 +936,7 @@ def dump_state(driver: LiberoPrimitiveDriver, output_dir: str, step_idx: int,
             ci = np.asarray(ci)
             if ci.dtype != np.uint8:
                 ci = ci.astype(np.uint8)
-            _imageio().imwrite(
+            imageio.imwrite(
                 os.path.join(images_cam_dir, f"image_cam_{step_idx:02d}.png"),
                 ci[::-1],
             )

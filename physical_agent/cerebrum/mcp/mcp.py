@@ -183,6 +183,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--transport-port", type=int, required=True, help="driver socket port")
     ap.add_argument("--vla-endpoint", required=True,
                     help="Pi0.5 /predict server (e.g. http://localhost:8000)")
+    ap.add_argument("--env", dest="env_name", default="libero",
+                    help="Environment backend for MCP tools.")
     ap.add_argument("--hide-object-coords", action="store_true",
                     help="redact GT object world poses from dumped state")
     ap.add_argument("--video-path", default="",
@@ -194,9 +196,10 @@ def main(argv: list[str] | None = None) -> int:
         if str(Path(args.repo_root)) not in sys.path:
             sys.path.insert(0, str(Path(args.repo_root)))
     init_output_dir(args.output_dir)
+    env_spec = agent_tools.configure_env(args.env_name)
     if args.transport_port <= 0:
         raise ValueError("--transport-port must be > 0")
-    agent_tools.set_driver_client(
+    env_spec.set_driver_client(
         SocketDriverClient(args.transport_host, args.transport_port),
         model=VLAClient(args.vla_endpoint),
         hide_object_coords=args.hide_object_coords,
