@@ -60,9 +60,7 @@ from physical_agent.driver_client import (  # noqa: E402
 )
 from physical_agent.driver_client.vla_client import VLAClient  # noqa: E402
 from physical_agent.tools import (  # noqa: E402
-    configure_env,
-    execute_tool,
-    get_tools_spec,
+    create_tool_registry,
     tool_result_to_content_blocks,
 )
 from physical_agent.utils.logging import get_logger, init_output_dir  # noqa: E402
@@ -448,7 +446,8 @@ def run_one_cell(
     - ``"codex"`` — delegates to local ``codex exec``.
     """
     env_name = env_name or infer_env_from_suite(suite)
-    env_spec = configure_env(env_name)
+    tool_registry = create_tool_registry(env_name)
+    env_spec = tool_registry.env_spec
     prompt_bundle = env_spec.prompts
 
     if max_episode_steps == 600 and "libero_10" in suite:
@@ -646,8 +645,8 @@ def run_one_cell(
         result = cerebrum.solve(
             system_prompt=system_prompt,
             user_message=user_msg,
-            tools_spec=get_tools_spec(),
-            tool_handler=execute_tool,
+            tools_spec=tool_registry.get_tools_spec(),
+            tool_handler=tool_registry.execute_tool,
             tool_result_formatter=tool_result_to_content_blocks,
             max_turns=max_turns,
         )
