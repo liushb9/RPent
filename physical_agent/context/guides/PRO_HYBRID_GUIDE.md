@@ -218,12 +218,12 @@ Replace `spatial` with `object`, `goal`, or `10` for the other base suites.
 ### 4.1. Hybrid run — same as STRICT_HYBRID_GUIDE except `LIBERO_TYPE=pro`
 
 ```bash
-ps -ef | grep repl_driver | grep -v grep | awk '{print $2}' | xargs -r kill
+ps -ef | grep env_server | grep -v grep | awk '{print $2}' | xargs -r kill
 cd ${PHYSICALAGENT_REPO_ROOT:-$(pwd)}
-REPL_OUTPUT_DIR="${REPL_OUTPUT_DIR:-$(mktemp -d -t repl_driver.XXXXXX)}"
+REPL_OUTPUT_DIR="${REPL_OUTPUT_DIR:-$(mktemp -d -t env_server.XXXXXX)}"
 rm -rf "$REPL_OUTPUT_DIR"
 LIBERO_TYPE=pro CUDA_VISIBLE_DEVICES=0 python \
-  physical_agent/backends/rlinf/repl_driver.py \
+  physical_agent/backends/rlinf/env_server.py \
   --suite libero_spatial_task --task 0 --seed 0 --max_episode_steps 600
 # (run in background; wait for $REPL_OUTPUT_DIR/states.json)
 ```
@@ -345,7 +345,7 @@ LIBERO_TYPE=pro python -c \
 # 2. Start a hybrid driver (background)
 cd ${PHYSICALAGENT_REPO_ROOT:-$(pwd)}
 LIBERO_TYPE=pro CUDA_VISIBLE_DEVICES=0 python \
-  physical_agent/backends/rlinf/repl_driver.py \
+  physical_agent/backends/rlinf/env_server.py \
   --suite libero_spatial_task --task <N> --seed 0 --max_episode_steps 600
 
 # 3. Wait for readiness

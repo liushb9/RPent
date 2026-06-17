@@ -128,10 +128,10 @@ via env: `CUDA_DEVICE=2 MODEL=claude-opus-4-7 OUTPUT_DIR=/path bash run_percepti
 
 ```bash
 cd ${PHYSICALAGENT_REPO_ROOT:-$(pwd)}
-REPL_OUTPUT_DIR="${REPL_OUTPUT_DIR:-$(mktemp -d -t repl_driver.XXXXXX)}"
+REPL_OUTPUT_DIR="${REPL_OUTPUT_DIR:-$(mktemp -d -t env_server.XXXXXX)}"
 CUDA_VISIBLE_DEVICES=0 LIBERO_TYPE=pro MUJOCO_GL=egl \
   python \
-    physical_agent/backends/rlinf/repl_driver.py \
+    physical_agent/backends/rlinf/env_server.py \
     --suite libero_object_swap --task 0 --seed 0 \
     --output_dir $REPL_OUTPUT_DIR \
     --max_episode_steps 600 \

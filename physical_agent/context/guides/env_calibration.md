@@ -142,7 +142,7 @@ Raw probe logs are preserved in:
 ```bash
 cd ${PHYSICALAGENT_REPO_ROOT:-$(pwd)}
 LIBERO_TYPE=pro CUDA_VISIBLE_DEVICES=0 python \
-  physical_agent/backends/rlinf/repl_driver.py \
+  physical_agent/backends/rlinf/env_server.py \
   --suite libero_10_with_mug --task 0 --seed 0 --max_episode_steps 5000 \
   --max_steps 80 &
 

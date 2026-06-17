@@ -254,9 +254,9 @@ freely `reset` to retry the same task.
 
 ```bash
 cd ${PHYSICALAGENT_REPO_ROOT:-$(pwd)}
-REPL_OUTPUT_DIR="${REPL_OUTPUT_DIR:-$(mktemp -d -t repl_driver.XXXXXX)}"
+REPL_OUTPUT_DIR="${REPL_OUTPUT_DIR:-$(mktemp -d -t env_server.XXXXXX)}"
 CUDA_VISIBLE_DEVICES=0 python \
-    physical_agent/backends/rlinf/repl_driver.py \
+    physical_agent/backends/rlinf/env_server.py \
     --output_dir "$REPL_OUTPUT_DIR" \
     --suite libero_10 --task <N> --seed 0 --max_episode_steps 5000
 ```
@@ -1226,7 +1226,7 @@ Cross-suite progress + non-obvious past failures:
 1. cd ${PHYSICALAGENT_REPO_ROOT:-$(pwd)}
 2. Bash run_in_background:true
      CUDA_VISIBLE_DEVICES=0 python \
-         physical_agent/backends/rlinf/repl_driver.py \
+         physical_agent/backends/rlinf/env_server.py \
          --suite libero_10 --task <N> --seed 0 --max_episode_steps 5000
 3. Bash run_in_background:true (wait for states.json)
      until [ -f $REPL_OUTPUT_DIR/states.json ] && \
