@@ -176,14 +176,3 @@ class Toolkit:
 
     def release_driver_client(self) -> None:
         """Release the env driver at end of run. Default: no-op."""
-
-
-def create_toolkit(env_name: str | None = None) -> Toolkit:
-    """Build the toolkit for one configured environment.
-
-    Delegates to the environment registry so the env-name -> module mapping
-    stays in one place (:mod:`physical_agent.envs.registry`).
-    """
-    from physical_agent.envs.registry import get_toolkit
-
-    return get_toolkit(env_name)

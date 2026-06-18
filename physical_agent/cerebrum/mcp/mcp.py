@@ -18,7 +18,7 @@ from typing import Any
 from physical_agent.driver_client import SocketDriverClient
 from physical_agent.driver_client.vla_client import VLAClient
 from physical_agent.utils.logging import init_output_dir
-from physical_agent import tools as agent_tools
+from physical_agent.envs.registry import get_toolkit
 from physical_agent.tools import Toolkit
 
 SERVER_NAME = "physical_agent"
@@ -196,7 +196,7 @@ def main(argv: list[str] | None = None) -> int:
         if str(Path(args.repo_root)) not in sys.path:
             sys.path.insert(0, str(Path(args.repo_root)))
     init_output_dir(args.output_dir)
-    toolkit = agent_tools.create_toolkit(args.env_name)
+    toolkit = get_toolkit(args.env_name)
     if args.transport_port <= 0:
         raise ValueError("--transport-port must be > 0")
     toolkit.set_driver_client(

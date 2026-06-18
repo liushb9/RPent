@@ -17,12 +17,12 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import claude_agent_sdk
 
 from physical_agent.cerebrum.base import CerebrumResult
-from physical_agent.tools import create_toolkit
+from physical_agent.tools.toolkit import Toolkit
 from physical_agent.utils.config import get_repo_root
 from physical_agent.utils.logging import get_logger
 
@@ -84,16 +84,15 @@ class ClaudeCodeCerebrum:
         *,
         system_prompt: str,
         user_message: str,
-        tools_spec: list[dict[str, Any]] | None = None,
-        tool_handler: Callable[[str, dict[str, Any]], Any] | None = None,
+        toolkit: Toolkit,
         max_turns: int,
     ) -> CerebrumResult:
         """Run one Claude Agent SDK session for the given prompt."""
-        del tools_spec, tool_handler
         prompt = f"{system_prompt}\n\n{user_message}" if system_prompt else user_message
         return asyncio.run(
             self._solve_async(
                 prompt,
+                toolkit=toolkit,
                 max_turns=max_turns,
             )
         )
@@ -104,6 +103,7 @@ class ClaudeCodeCerebrum:
         self,
         prompt: str,
         *,
+        toolkit: Toolkit,
         max_turns: int,
     ) -> CerebrumResult:
         sdk = claude_agent_sdk
@@ -118,8 +118,8 @@ class ClaudeCodeCerebrum:
         raw_stream_path = output_path.with_suffix(output_path.suffix + ".stream.jsonl")
         recorder = _Recorder(max_turns=max_turns)
 
-        self._bind_runtime()
-        options = self._build_options(sdk, max_turns=max_turns)
+        self._bind_runtime(toolkit)
+        options = self._build_options(sdk, toolkit=toolkit, max_turns=max_turns)
 
         logger.info("prompt: %d chars", len(prompt))
         logger.info("output_dir: %s", self._output_dir)
@@ -187,12 +187,12 @@ class ClaudeCodeCerebrum:
 
     # -- options + tool bridge ---------------------------------------------
 
-    def _build_options(self, sdk: Any, *, max_turns: int) -> Any:
+    def _build_options(self, sdk: Any, *, toolkit: Toolkit, max_turns: int) -> Any:
         allowed = [
             part for part in self._allowed_tools.replace(",", " ").split() if part
         ]
         builtins = [name for name in allowed if "__" not in name]
-        allowed.extend(create_toolkit(self._env_name).allowed_mcp_tool_names)
+        allowed.extend(toolkit.allowed_mcp_tool_names)
 
         return sdk.ClaudeAgentOptions(
             cwd=self._repo_root,
@@ -204,7 +204,7 @@ class ClaudeCodeCerebrum:
             mcp_servers={
                 "physical_agent": _build_physical_agent_server(
                     sdk,
-                    env_name=self._env_name,
+                    toolkit=toolkit,
                 ),
             },
             add_dirs=[self._output_dir, *self._extra_dirs],
@@ -213,7 +213,7 @@ class ClaudeCodeCerebrum:
             stderr=lambda line: logger.debug("[claude-sdk] %s", line.rstrip()),
         )
 
-    def _bind_runtime(self) -> None:
+    def _bind_runtime(self, toolkit: Toolkit) -> None:
         """Bind PhysicalAgent driver/output state for this run.
 
         Single source of side effects in this backend. Always called explicitly
@@ -229,7 +229,7 @@ class ClaudeCodeCerebrum:
         from physical_agent.utils.logging import init_output_dir
 
         init_output_dir(self._output_dir)
-        create_toolkit(self._env_name).set_driver_client(
+        toolkit.set_driver_client(
             SocketDriverClient(self._transport_host, self._transport_port),
             model=VLAClient(self._vla_endpoint),
             hide_object_coords=self._hide_object_coords,
@@ -427,8 +427,7 @@ class _Recorder:
 # ---------------------------------------------------------------------------
 
 
-def _build_physical_agent_server(sdk: Any, *, env_name: str) -> Any:
-    toolkit = create_toolkit(env_name)
+def _build_physical_agent_server(sdk: Any, *, toolkit: Toolkit) -> Any:
     sdk_tools = []
     for spec in toolkit.get_tools_spec():
         name = str(spec["name"])

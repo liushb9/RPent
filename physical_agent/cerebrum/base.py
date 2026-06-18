@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 from physical_agent.utils.config import (
     get_anthropic_api_key,
@@ -15,7 +15,7 @@ from physical_agent.utils.config import (
     get_openai_compat_model,
     get_repo_root,
 )
-from physical_agent.tools.toolkit import ToolResult
+from physical_agent.tools.toolkit import Toolkit
 
 
 class CerebrumResult:
@@ -51,8 +51,7 @@ class Cerebrum(Protocol):
         *,
         system_prompt: str,
         user_message: str,
-        tools_spec: list[dict[str, Any]],
-        tool_handler: Callable[[str, dict[str, Any]], ToolResult],
+        toolkit: Toolkit,
         max_turns: int,
     ) -> CerebrumResult:
         """Run the multi-turn agent loop until completion or budget.
@@ -60,11 +59,12 @@ class Cerebrum(Protocol):
         Args:
             system_prompt: System-level instructions (role, rules, workflow).
             user_message: Initial user message (task description, first steps).
-            tools_spec: Anthropic-style tool definitions list.
-            tool_handler: ``(name, input_dict) -> ToolResult``. The returned
-                :class:`~physical_agent.tools.toolkit.ToolResult` already
-                carries formatted content blocks, so no separate formatter is
-                forwarded.
+            toolkit: The full :class:`~physical_agent.tools.toolkit.Toolkit`
+                (common + env tools). Backends derive ``tools_spec`` via
+                ``toolkit.get_tools_spec()`` and dispatch calls via
+                ``toolkit.execute_tool()``; MCP-based backends also use
+                ``toolkit.allowed_mcp_tool_names`` and the driver lifecycle
+                hooks.
             max_turns: Maximum LLM turns before giving up.
 
         Returns:

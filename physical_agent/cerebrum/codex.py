@@ -17,11 +17,12 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import openai_codex
 
 from physical_agent.cerebrum.base import CerebrumResult
+from physical_agent.tools.toolkit import Toolkit
 from physical_agent.utils.config import get_repo_root
 from physical_agent.utils.logging import get_logger
 
@@ -79,12 +80,11 @@ class CodexCerebrum:
         *,
         system_prompt: str,
         user_message: str,
-        tools_spec: list[dict[str, Any]] | None = None,
-        tool_handler: Callable[[str, dict[str, Any]], Any] | None = None,
+        toolkit: Toolkit,
         max_turns: int,
     ) -> CerebrumResult:
         """Run one Codex SDK turn for the given prompt."""
-        del tools_spec, tool_handler
+        del toolkit  # tools run in a separate MCP subprocess; see _build_config
         prompt = f"{system_prompt}\n\n{user_message}" if system_prompt else user_message
         if self._output_path is None:
             with tempfile.NamedTemporaryFile(

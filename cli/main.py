@@ -21,6 +21,7 @@ from physical_agent.utils.config import (
 from physical_agent.cerebrum.base import build_cerebrum  # noqa: E402
 from physical_agent.envs.registry import (  # noqa: E402
     get_env_spec,
+    get_toolkit,
     infer_env_from_suite,
 )
 from physical_agent.driver_client import (  # noqa: E402
@@ -29,9 +30,6 @@ from physical_agent.driver_client import (  # noqa: E402
     set_socket_endpoint,
 )
 from physical_agent.driver_client.vla_client import VLAClient  # noqa: E402
-from physical_agent.tools import (  # noqa: E402
-    create_toolkit,
-)
 from physical_agent.utils.logging import get_logger, init_output_dir  # noqa: E402
 
 logger = get_logger("agent")
@@ -329,7 +327,7 @@ def main() -> int:
     task = args.task
     seed = args.seed
     env_name = args.env_name or infer_env_from_suite(suite)
-    toolkit = create_toolkit(env_name)
+    toolkit = get_toolkit(env_name)
     env_spec = get_env_spec(env_name)
     prompt_bundle = env_spec.prompts
 
@@ -448,8 +446,7 @@ def main() -> int:
         result = cerebrum.solve(
             system_prompt=system_prompt,
             user_message=user_msg,
-            tools_spec=toolkit.get_tools_spec(),
-            tool_handler=toolkit.execute_tool,
+            toolkit=toolkit,
             max_turns=args.max_turns,
         )
         finish_result = result.finish_result

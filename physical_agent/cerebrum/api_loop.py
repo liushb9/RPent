@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Callable
+from typing import Any
 
 from physical_agent.cerebrum.adapters.base import ApiAdapter
 from physical_agent.cerebrum.base import CerebrumResult
-from physical_agent.tools.toolkit import ToolResult
+from physical_agent.tools.toolkit import Toolkit, ToolResult
 from physical_agent.utils.logging import get_logger
 
 logger = get_logger("api_loop")
@@ -23,15 +23,14 @@ class ApiAgentLoop:
         *,
         system_prompt: str,
         user_message: str,
-        tools_spec: list[dict[str, Any]],
-        tool_handler: Callable[[str, dict[str, Any]], ToolResult],
+        toolkit: Toolkit,
         max_turns: int,
     ) -> CerebrumResult:
         """Run the shared tool-calling loop until finish, stop, or budget."""
         state = self._adapter.start(
             system_prompt=system_prompt,
             user_message=user_message,
-            tools_spec=tools_spec,
+            tools_spec=toolkit.get_tools_spec(),
         )
 
         finish_result = None
@@ -65,7 +64,7 @@ class ApiAgentLoop:
                             },
                         )
                     else:
-                        tr = tool_handler(tool_call.name, tool_call.arguments)
+                        tr = toolkit.execute_tool(tool_call.name, tool_call.arguments)
 
                     tr.call_id = tool_call.id
 
