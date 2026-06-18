@@ -1,23 +1,25 @@
-"""Claude Code cerebrum — delegates the agent loop to `claude -p`.
+"""Claude Agent SDK cerebrum.
 
-Claude Code uses normal filesystem tools for reading guides and writing final
-artifacts, and a local MCP server for driver commands such as per-primitive
-actions (``move_to``, ``pi0_pick``, …) and ``view_driver_state``. This
-cerebrum writes a combined task prompt, spawns ``claude -p`` with the MCP
-configuration and directory access, and waits for completion.
+A thin, SDK-first backend for PhysicalAgent. ``solve()`` does four things:
+prepare output files, bind the in-process tool runtime, drive the SDK
+query, and assemble a ``CerebrumResult``. Event rendering and stats
+collection live in a single observation layer (``_Recorder``) that has
+no backend state of its own.
 """
+
 from __future__ import annotations
 
+import asyncio
+import base64
+import dataclasses
 import json
-import os
-import selectors
-import signal
-import subprocess
-import sys
 import tempfile
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
+
+import claude_agent_sdk
 
 from physical_agent.cerebrum.base import CerebrumResult
 from physical_agent.envs.registry import get_env_spec
@@ -26,9 +28,13 @@ from physical_agent.utils.logging import get_logger
 
 logger = get_logger("claude")
 
+# ---------------------------------------------------------------------------
+# Public backend
+# ---------------------------------------------------------------------------
+
 
 class ClaudeCodeCerebrum:
-    """Cerebrum backed by the ``claude`` CLI."""
+    """Cerebrum backed by the Claude Agent SDK."""
 
     def __init__(
         self,
@@ -41,7 +47,6 @@ class ClaudeCodeCerebrum:
         max_budget_usd: float = 10.0,
         extra_dirs: list[str] | None = None,
         output_path: str | Path | None = None,
-        enable_mcp: bool = True,
         transport_host: str = "127.0.0.1",
         transport_port: int = 0,
         vla_endpoint: str = "",
@@ -49,7 +54,7 @@ class ClaudeCodeCerebrum:
         hide_object_coords: bool = False,
         video_path: str = "",
     ):
-        """Initialize the Claude Code subprocess wrapper."""
+        """Initialize the Claude Agent SDK backend."""
         self._output_dir = str(output_dir)
         self._repo_root = str(repo_root) if repo_root else str(get_repo_root())
         self._model = model
@@ -58,14 +63,12 @@ class ClaudeCodeCerebrum:
         self._max_budget_usd = max_budget_usd
         self._extra_dirs = extra_dirs or []
         self._output_path = Path(output_path) if output_path else None
-        self._enable_mcp = enable_mcp
         self._transport_host = transport_host
         self._transport_port = int(transport_port)
         self._vla_endpoint = vla_endpoint
         self._env_name = env_name
         self._hide_object_coords = bool(hide_object_coords)
         self._video_path = video_path
-        self._driver_process: subprocess.Popen | None = None
 
     def set_socket_endpoint(self, host: str, port: int) -> None:
         """Record the driver socket endpoint discovered after startup."""
@@ -75,10 +78,6 @@ class ClaudeCodeCerebrum:
     def set_vla_endpoint(self, endpoint: str) -> None:
         """Record the vla_server HTTP endpoint discovered after startup."""
         self._vla_endpoint = endpoint
-
-    def set_driver_process(self, proc: subprocess.Popen) -> None:
-        """Record the spawned driver process for protocol compatibility."""
-        self._driver_process = proc
 
     def solve(
         self,
@@ -90,524 +89,445 @@ class ClaudeCodeCerebrum:
         tool_result_formatter: Callable[[dict[str, Any]], list[dict[str, Any]]] | None = None,
         max_turns: int,
     ) -> CerebrumResult:
-        """Run ``claude -p`` with the combined system+user prompt.
-
-        ``tools_spec``, ``tool_handler``, and ``tool_result_formatter`` are
-        accepted for protocol compatibility but **ignored** — Claude Code
-        uses its own built-in tool set (Bash, Read, Write, Grep, Glob).
-        """
-        # Build the combined task prompt.  The Claude Code prompt is often a
-        # self-contained legacy prompt, so avoid a leading blank when there is
-        # no separate system prompt.
-        full_prompt = (
-            f"{system_prompt}\n\n{user_message}" if system_prompt else user_message
+        """Run one Claude Agent SDK session for the given prompt."""
+        del tools_spec, tool_handler, tool_result_formatter
+        prompt = f"{system_prompt}\n\n{user_message}" if system_prompt else user_message
+        return asyncio.run(
+            self._solve_async(
+                prompt,
+                max_turns=max_turns,
+            )
         )
 
-        # Write prompt to a temp file so it can be passed to claude -p.
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".md", prefix="cc_task_", delete=False
-        ) as f:
-            f.write(full_prompt)
-            prompt_file = f.name
+    # -- internal lifecycle -------------------------------------------------
 
-        mcp_config_file: str | None = None
-        try:
-            logger.info("prompt: %d chars -> %s", len(full_prompt), prompt_file)
-            logger.info("output_dir: %s", self._output_dir)
-            logger.info(
-                "invoking claude -p --model %s (timeout=%ds, budget=$%s)",
-                self._model, self._timeout_s, self._max_budget_usd,
-            )
-
-            allowed_tools = self._allowed_tools
-            if self._enable_mcp:
-                mcp_config_file = _write_physical_agent_mcp_config(
-                    output_dir=self._output_dir,
-                    repo_root=self._repo_root,
-                    transport_host=self._transport_host,
-                    transport_port=self._transport_port,
-                    vla_endpoint=self._vla_endpoint,
-                    env_name=self._env_name,
-                    hide_object_coords=self._hide_object_coords,
-                    video_path=self._video_path,
-                )
-                allowed_tools = _append_allowed_tools(
-                    allowed_tools,
-                    list(get_env_spec(self._env_name).allowed_mcp_tool_names),
-                )
-                logger.info("mcp config: %s", mcp_config_file)
-
-            cmd = [
-                "claude", "-p",
-                full_prompt,               # stdin works too, but explicit is clearer
-                "--bare",
-                "--model", self._model,
-                "--output-format", "stream-json",
-                "--verbose",
-                "--add-dir", self._output_dir,
-                "--allowedTools", allowed_tools,
-                "--max-budget-usd", str(self._max_budget_usd),
-            ]
-            if mcp_config_file is not None:
-                cmd += ["--mcp-config", mcp_config_file, "--strict-mcp-config"]
-            for d in self._extra_dirs:
-                cmd += ["--add-dir", d]
-
-            output_path = self._output_path or Path(prompt_file).with_suffix(".out")
+    async def _solve_async(
+        self,
+        prompt: str,
+        *,
+        max_turns: int,
+    ) -> CerebrumResult:
+        sdk = claude_agent_sdk
+        if self._output_path is None:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".out", prefix="claude_agent_task_", delete=False
+            ) as f:
+                output_path = Path(f.name)
+        else:
+            output_path = self._output_path
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            raw_stream_path = output_path.with_suffix(output_path.suffix + ".stream.jsonl")
+        raw_stream_path = output_path.with_suffix(output_path.suffix + ".stream.jsonl")
+        recorder = _Recorder(max_turns=max_turns)
 
-            t0 = time.time()
-            timed_out = False
-            rendered_chunks: list[str] = []
-            renderer = _ClaudeCodeStreamRenderer(max_turns=max_turns)
-            with open(output_path, "w") as out_f, open(raw_stream_path, "w") as raw_f:
-                proc = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    bufsize=1,
-                    cwd=self._repo_root,
-                    env={**os.environ},  # inherit API key / base URL from env
-                    start_new_session=True,
-                )
+        self._bind_runtime()
+        options = self._build_options(sdk, max_turns=max_turns)
 
-                timed_out = _poll_stdout_until_exit(
-                    proc=proc,
-                    timeout_s=self._timeout_s,
-                    raw_f=raw_f,
-                    out_f=out_f,
-                    rendered_chunks=rendered_chunks,
-                    renderer=renderer,
-                    timeout_prefix="[cc-cerebrum]",
-                )
+        logger.info("prompt: %d chars", len(prompt))
+        logger.info("output_dir: %s", self._output_dir)
+        logger.info(
+            "invoking Claude Agent SDK model %s (timeout=%ds, budget=$%s)",
+            self._model,
+            self._timeout_s,
+            self._max_budget_usd,
+        )
 
-            elapsed = time.time() - t0
-            stdout_text = "".join(rendered_chunks) or output_path.read_text(errors="replace")
-            returncode = proc.returncode
-            claude_stats = renderer.stats()
-
-            logger.info(
-                "claude -p finished in %.1fs rc=%d", elapsed, returncode,
-            )
-            logger.info("output: %s", output_path)
-            logger.info("raw stream: %s", raw_stream_path)
-
-            error = None
-            if timed_out:
-                error = f"claude -p timed out after {self._timeout_s}s"
-            elif returncode != 0:
-                error = f"claude -p exited with rc={returncode}: {stdout_text[-500:]}"
-
-            return CerebrumResult(
-                finish_result=None,  # Can't easily parse from Claude Code output
-                messages=[{"role": "claude_code", "content": stdout_text}],
-                stats={
-                    "elapsed_s": round(elapsed, 1),
-                    "returncode": returncode,
-                    "output_chars": len(stdout_text),
-                    "output_path": str(output_path),
-                    "raw_stream_path": str(raw_stream_path),
-                    **claude_stats,
-                },
-                error=error,
-            )
-        except subprocess.TimeoutExpired:
-            return CerebrumResult(
-                error=f"claude -p timed out after {self._timeout_s}s",
-                stats={"elapsed_s": self._timeout_s},
-            )
-        finally:
-            # Clean up temp prompt file.
+        started = time.time()
+        error: str | None = None
+        rendered_chunks: list[str] = []
+        with open(output_path, "w") as out_f, open(raw_stream_path, "w") as raw_f:
             try:
-                os.unlink(prompt_file)
-            except OSError:
-                pass
-            if mcp_config_file is not None:
-                try:
-                    os.unlink(mcp_config_file)
-                except OSError:
-                    pass
+
+                async def consume_stream() -> None:
+                    async for message in sdk.query(prompt=prompt, options=options):
+                        _write_jsonl(raw_f, _message_to_json(message))
+                        if rendered := recorder.observe(message):
+                            rendered_chunks.append(rendered)
+                            out_f.write(rendered)
+                            out_f.flush()
+                            logger.info(rendered.rstrip())
+
+                await asyncio.wait_for(consume_stream(), timeout=self._timeout_s)
+            except asyncio.TimeoutError:
+                error = f"Claude Agent SDK timed out after {self._timeout_s}s"
+                rendered = f"\n[cc-cerebrum] {error}\n"
+                rendered_chunks.append(rendered)
+                out_f.write(rendered)
+                out_f.flush()
+                _write_jsonl(raw_f, {"type": "timeout", "message": error})
+                logger.info(rendered.rstrip())
+            except Exception as e:
+                error = f"{type(e).__name__}: {e}"
+                rendered = f"\n[cc-cerebrum] {error}\n"
+                rendered_chunks.append(rendered)
+                out_f.write(rendered)
+                out_f.flush()
+                _write_jsonl(raw_f, {"type": "error", "message": error})
+                logger.info(rendered.rstrip())
+
+        elapsed = time.time() - started
+        text = "".join(rendered_chunks) or output_path.read_text(errors="replace")
+        error = error or recorder.error
+
+        logger.info("Claude Agent SDK finished in %.1fs", elapsed)
+        logger.info("output: %s", output_path)
+        logger.info("raw stream: %s", raw_stream_path)
+
+        return CerebrumResult(
+            finish_result=recorder.finish_result,
+            messages=[{"role": "claude_agent_sdk", "content": text}],
+            stats={
+                "backend": "claude_agent_sdk",
+                "elapsed_s": round(elapsed, 1),
+                "output_chars": len(text),
+                "output_path": str(output_path),
+                "raw_stream_path": str(raw_stream_path),
+                **recorder.stats(),
+            },
+            error=error,
+        )
+
+    # -- options + tool bridge ---------------------------------------------
+
+    def _build_options(self, sdk: Any, *, max_turns: int) -> Any:
+        allowed = [
+            part for part in self._allowed_tools.replace(",", " ").split() if part
+        ]
+        builtins = [name for name in allowed if "__" not in name]
+        allowed.extend(get_env_spec(self._env_name).allowed_mcp_tool_names)
+
+        return sdk.ClaudeAgentOptions(
+            cwd=self._repo_root,
+            model=self._model,
+            max_turns=max_turns,
+            max_budget_usd=self._max_budget_usd,
+            tools=builtins or None,
+            allowed_tools=list(dict.fromkeys(allowed)),
+            mcp_servers={
+                "physical_agent": _build_physical_agent_server(
+                    sdk,
+                    env_name=self._env_name,
+                ),
+            },
+            add_dirs=[self._output_dir, *self._extra_dirs],
+            # Ignore user/project .claude configuration; PhysicalAgent owns the loop.
+            setting_sources=[],
+            stderr=lambda line: logger.debug("[claude-sdk] %s", line.rstrip()),
+        )
+
+    def _bind_runtime(self) -> None:
+        """Bind PhysicalAgent driver/output state for this run.
+
+        Single source of side effects in this backend. Always called explicitly
+        from ``solve()``, never as a hidden import-time hook.
+        """
+        if self._transport_port <= 0:
+            raise RuntimeError("Claude Agent SDK requires a bound driver socket port")
+        if not self._vla_endpoint:
+            raise RuntimeError("Claude Agent SDK requires a vla_endpoint")
+
+        from physical_agent.driver_client import SocketDriverClient
+        from physical_agent.driver_client.vla_client import VLAClient
+        from physical_agent.utils.logging import init_output_dir
+
+        init_output_dir(self._output_dir)
+        get_env_spec(self._env_name).set_driver_client(
+            SocketDriverClient(self._transport_host, self._transport_port),
+            model=VLAClient(self._vla_endpoint),
+            hide_object_coords=self._hide_object_coords,
+            video_path=self._video_path or None,
+        )
 
 
-def _append_allowed_tools(existing: str, additions: list[str]) -> str:
-    current = existing.split()
-    seen = set(current)
-    for tool in additions:
-        if tool not in seen:
-            current.append(tool)
-            seen.add(tool)
-    return " ".join(current)
+# ---------------------------------------------------------------------------
+# Observation layer
+# ---------------------------------------------------------------------------
 
 
-def _write_physical_agent_mcp_config(
-    *,
-    output_dir: str,
-    repo_root: str,
-    transport_host: str,
-    transport_port: int,
-    vla_endpoint: str,
-    env_name: str,
-    hide_object_coords: bool,
-    video_path: str,
-) -> str:
-    if transport_port <= 0:
-        raise RuntimeError("Claude Code MCP socket transport requires a bound port")
-    if not vla_endpoint:
-        raise RuntimeError("Claude Code MCP server requires a vla_endpoint")
-    pythonpath = repo_root
-    if os.environ.get("PYTHONPATH"):
-        pythonpath = repo_root + os.pathsep + os.environ["PYTHONPATH"]
-    args = [
-        "-m",
-        "physical_agent.cerebrum.mcp.mcp",
-        "--output-dir",
-        output_dir,
-        "--repo-root",
-        repo_root,
-        "--transport-host",
-        transport_host,
-        "--transport-port",
-        str(transport_port),
-        "--vla-endpoint",
-        vla_endpoint,
-        "--env",
-        env_name,
-    ]
-    if hide_object_coords:
-        args.append("--hide-object-coords")
-    if video_path:
-        args += ["--video-path", video_path]
-    config = {
-        "mcpServers": {
-            "physical_agent": {
-                "command": sys.executable,
-                "args": args,
-                "env": {
-                    "HYBRID_DRIVER_OUTPUT_DIR": output_dir,
-                    "PHYSICAL_AGENT_TRANSPORT_HOST": transport_host,
-                    "PHYSICAL_AGENT_TRANSPORT_PORT": str(transport_port),
-                    "PHYSICAL_AGENT_VLA_ENDPOINT": vla_endpoint,
-                    "PHYSICAL_AGENT_ENV": env_name,
-                    "PYTHONPATH": pythonpath,
-                },
-            }
+@dataclass
+class _Recorder:
+    """Pure adapter: consume SDK messages, emit text + accumulate stats.
+
+    Holds no backend state. Errors that the SDK itself reports become
+    ``recorder.error``; transport-level errors are written beside the transcript.
+    """
+
+    max_turns: int
+    turns: int = 0
+    tool_calls: int = 0
+    tool_names: dict[str, str] = field(default_factory=dict)
+    pending_finish: dict[str, dict[str, Any]] = field(default_factory=dict)
+    usage: dict[str, int] = field(
+        default_factory=lambda: {
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+            "total_cache_creation_input_tokens": 0,
+            "total_cache_read_input_tokens": 0,
         }
-    }
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".json", prefix="cc_mcp_", delete=False
-    ) as f:
-        json.dump(config, f)
-        return f.name
+    )
+    total_cost_usd: float | None = None
+    finish_result: dict[str, Any] | None = None
+    error: str | None = None
 
+    # -- public ------------------------------------------------------------
 
-def _terminate_process_group(proc: subprocess.Popen) -> None:
-    """Terminate Claude and tool subprocesses spawned in its process group."""
-    try:
-        os.killpg(proc.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return
-    except OSError:
-        proc.terminate()
-        return
-
-    try:
-        proc.wait(timeout=3)
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except OSError:
-            proc.kill()
-
-
-def _poll_stdout_until_exit(
-    *,
-    proc: subprocess.Popen,
-    timeout_s: int,
-    raw_f,
-    out_f,
-    rendered_chunks: list[str],
-    renderer: "_ClaudeCodeStreamRenderer",
-    timeout_prefix: str,
-) -> bool:
-    """Poll child stdout in the main thread until exit or timeout."""
-    if proc.stdout is None:
-        try:
-            proc.wait(timeout=timeout_s)
-            return False
-        except subprocess.TimeoutExpired:
-            msg = f"\n{timeout_prefix} TIMEOUT after {timeout_s}s; killing worker.\n"
-            _write_rendered(msg, raw_f, out_f, rendered_chunks, "timeout")
-            _terminate_process_group(proc)
-            proc.wait(timeout=15)
-            return True
-
-    selector = selectors.DefaultSelector()
-    selector.register(proc.stdout, selectors.EVENT_READ)
-    deadline = time.time() + timeout_s
-    timed_out = False
-
-    try:
-        while True:
-            remaining = deadline - time.time()
-            if remaining <= 0 and proc.poll() is None:
-                timed_out = True
-                msg = f"\n{timeout_prefix} TIMEOUT after {timeout_s}s; killing worker.\n"
-                _write_rendered(msg, raw_f, out_f, rendered_chunks, "timeout")
-                _terminate_process_group(proc)
-                proc.wait(timeout=15)
-
-            events = selector.select(timeout=0 if timed_out else min(max(remaining, 0), 0.25))
-            for key, _ in events:
-                line = key.fileobj.readline()
-                if not line:
-                    selector.unregister(key.fileobj)
-                    break
-                raw_f.write(line)
-                raw_f.flush()
-                rendered = renderer.render(line)
-                if rendered:
-                    rendered_chunks.append(rendered)
-                    out_f.write(rendered)
-                    out_f.flush()
-                    logger.info(rendered.rstrip())
-
-            if proc.poll() is not None:
-                # Drain any buffered lines after process exit.
-                while True:
-                    line = proc.stdout.readline()
-                    if not line:
-                        break
-                    raw_f.write(line)
-                    raw_f.flush()
-                    rendered = renderer.render(line)
-                    if rendered:
-                        rendered_chunks.append(rendered)
-                        out_f.write(rendered)
-                        out_f.flush()
-                        logger.info(rendered.rstrip())
-                break
-    finally:
-        selector.close()
-    return timed_out
-
-
-def _write_rendered(
-    msg: str,
-    raw_f,
-    out_f,
-    rendered_chunks: list[str],
-    event_type: str,
-) -> None:
-    out_f.write(msg)
-    rendered_chunks.append(msg)
-    out_f.flush()
-    raw_f.write(json.dumps({"type": event_type, "message": msg}) + "\n")
-    raw_f.flush()
-    logger.info(msg.rstrip())
-
-
-class _ClaudeCodeStreamRenderer:
-    def __init__(self, *, max_turns: int):
-        self._turn = 0
-        self._max_turns = max_turns
-        self._tool_calls = 0
-        self._tool_uses: dict[str, dict[str, Any]] = {}
-        self._seen_usage_message_ids: set[str] = set()
-        self._total_input_tokens = 0
-        self._total_output_tokens = 0
-        self._total_cache_creation_input_tokens = 0
-        self._total_cache_read_input_tokens = 0
-
-    def stats(self) -> dict[str, int]:
+    def stats(self) -> dict[str, int | float | None]:
         return {
-            "turns_used": self._turn,
-            "tool_calls": self._tool_calls,
-            "total_input_tokens": self._total_input_tokens,
-            "total_output_tokens": self._total_output_tokens,
-            "total_cache_creation_input_tokens": self._total_cache_creation_input_tokens,
-            "total_cache_read_input_tokens": self._total_cache_read_input_tokens,
+            "turns_used": self.turns,
+            "tool_calls": self.tool_calls,
+            "total_cost_usd": self.total_cost_usd,
+            **self.usage,
         }
 
-    def render(self, line: str) -> str:
-        """Convert one Claude Code stream-json event to a readable log line."""
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            return line
-
-        event_type = event.get("type")
-        if event_type == "system":
-            subtype = event.get("subtype")
-            session_id = event.get("session_id")
-            detail = f" subtype={subtype}" if subtype else ""
-            sid = f" session={session_id}" if session_id else ""
-            return f"[cc-system]{detail}{sid}\n"
-
-        if event_type == "assistant":
-            message = event.get("message", event)
-            self._accumulate_usage(message)
-            return self._render_assistant_message(message)
-
-        if event_type == "user":
-            return self._render_user_event(event)
-
-        if event_type == "result":
-            return self._render_result_event(event)
-
+    def observe(self, message: Any) -> str:
+        kind = _kind(message)
+        if kind == "SystemMessage":
+            return self._system(message)
+        if kind == "AssistantMessage":
+            return self._assistant(message)
+        if kind == "UserMessage":
+            return self._user(message)
+        if kind == "ResultMessage":
+            return self._result(message)
         return ""
 
-    def _accumulate_usage(self, message: dict[str, Any]) -> None:
-        msg_id = str(message.get("id") or "")
-        if msg_id and msg_id in self._seen_usage_message_ids:
-            return
-        usage = message.get("usage")
-        if not isinstance(usage, dict):
-            return
-        if msg_id:
-            self._seen_usage_message_ids.add(msg_id)
-        self._total_input_tokens += int(usage.get("input_tokens") or 0)
-        self._total_output_tokens += int(usage.get("output_tokens") or 0)
-        self._total_cache_creation_input_tokens += int(
-            usage.get("cache_creation_input_tokens") or 0
-        )
-        self._total_cache_read_input_tokens += int(usage.get("cache_read_input_tokens") or 0)
+    # -- per-message handlers ---------------------------------------------
 
-    def _render_assistant_message(self, message: dict[str, Any]) -> str:
-        rendered: list[str] = []
-        for block in _iter_content_blocks(message):
-            block_type = block.get("type")
-            if block_type == "text":
-                text = str(block.get("text", "")).strip()
+    def _system(self, message: Any) -> str:
+        subtype = _get(message, "subtype", "")
+        if subtype == "thinking_tokens":
+            return ""
+        data = _get(message, "data", {})
+        session = data.get("session_id") if isinstance(data, dict) else ""
+        return f"[cc-system] subtype={subtype} session={session}\n"
+
+    def _assistant(self, message: Any) -> str:
+        self._add_usage(_get(message, "usage"))
+        lines: list[str] = []
+        for block in _get(message, "content", []) or []:
+            block_kind = _kind(block)
+            if block_kind == "TextBlock":
+                text = str(_get(block, "text", "")).strip()
                 if text:
-                    self._turn += 1
-                    rendered.append(
-                        f"\n[agent] === turn {self._turn}/{self._max_turns} ===\n"
+                    self.turns += 1
+                    lines.append(
+                        f"\n[agent] === turn {self.turns}/{self.max_turns} ===\n"
                         f"[claude] {text}\n"
                     )
-            elif block_type == "tool_use":
-                tool_id = str(block.get("id") or "")
-                name = str(block.get("name") or "tool")
-                payload = block.get("input", {})
-                if tool_id:
-                    self._tool_uses[tool_id] = {"name": name, "input": payload}
-                payload_text = json.dumps(payload, ensure_ascii=False, default=str)
-                if len(payload_text) > 500:
-                    payload_text = payload_text[:500] + f"...(+{len(payload_text) - 500})"
-                rendered.append(f"[tool->] {name}: {payload_text}\n")
-        return "".join(rendered)
+            elif block_kind == "ToolUseBlock":
+                tool_id = str(_get(block, "id", ""))
+                name = str(_get(block, "name", "tool"))
+                self.tool_names[tool_id] = name
+                tool_input = _get(block, "input", {}) or {}
+                if name in {"finish", "mcp__physical_agent__finish"} and isinstance(
+                    tool_input, dict
+                ):
+                    self.pending_finish[tool_id] = dict(tool_input)
+                lines.append(f"[tool->] {name}: {_short_json(tool_input, limit=500)}\n")
+            elif block_kind == "ToolResultBlock":
+                lines.append(self._tool_result(block))
+        if assistant_error := _get(message, "error"):
+            lines.append(f"[cc-assistant-error] {assistant_error}\n")
+        return "".join(lines)
 
-    def _render_user_event(self, event: dict[str, Any]) -> str:
-        rendered: list[str] = []
-        tool_result_meta = event.get("tool_use_result")
-        message = event.get("message", event)
-        for block in _iter_content_blocks(message):
-            if block.get("type") != "tool_result":
-                continue
-            self._tool_calls += 1
-            tool_use_id = str(block.get("tool_use_id") or "")
-            tool = self._tool_uses.get(tool_use_id, {})
-            name = str(tool.get("name") or "tool_result")
-            summary = _summarise_tool_result(
-                content=block.get("content", ""),
-                tool_input=tool.get("input"),
-                tool_use_result=tool_result_meta,
+    def _user(self, message: Any) -> str:
+        tool_use_id = _get(message, "parent_tool_use_id")
+        content = _get(message, "content", "")
+        if tool_use_id:
+            return self._tool_result_content(content, tool_use_id=str(tool_use_id))
+        if isinstance(content, list):
+            return "".join(
+                self._tool_result(block)
+                for block in content
+                if _kind(block) == "ToolResultBlock"
             )
-            rendered.append(f"[tool<-] {name}: {json.dumps(summary, ensure_ascii=False)}\n")
-        return "".join(rendered)
+        return ""
 
-    def _render_result_event(self, event: dict[str, Any]) -> str:
-        subtype = event.get("subtype")
-        duration_ms = event.get("duration_ms")
-        cost = event.get("total_cost_usd")
-        pieces = ["[cc-result]"]
-        if subtype:
-            pieces.append(str(subtype))
-        if duration_ms is not None:
-            pieces.append(f"duration={duration_ms / 1000:.1f}s")
-        if cost is not None:
-            pieces.append(f"cost=${float(cost):.4f}")
-        result = str(event.get("result") or "").strip()
-        if result:
-            pieces.append(f"result_size={len(result)}")
-        usage = (
-            f"\n[usage] in={self._total_input_tokens} "
-            f"cache_create={self._total_cache_creation_input_tokens} "
-            f"cache_read={self._total_cache_read_input_tokens} "
-            f"out={self._total_output_tokens} tool_calls={self._tool_calls}"
+    def _tool_result(self, block: Any, *, tool_use_id: str | None = None) -> str:
+        return self._tool_result_content(
+            _get(block, "content", ""),
+            tool_use_id=tool_use_id or str(_get(block, "tool_use_id", "")),
+            is_error=_get(block, "is_error"),
         )
-        return " ".join(pieces) + usage + "\n"
+
+    def _tool_result_content(
+        self,
+        content: Any,
+        *,
+        tool_use_id: str,
+        is_error: Any = None,
+    ) -> str:
+        self.tool_calls += 1
+        name = self.tool_names.get(tool_use_id, "tool_result")
+        summary: dict[str, Any] = {"size": _payload_size(content)}
+        if _content_has_image(content):
+            summary["images"] = 1
+        if is_error:
+            summary["is_error"] = bool(is_error)
+        # Promote the finish payload once the tool result lands successfully.
+        pending = self.pending_finish.pop(tool_use_id, None)
+        if pending is not None and not is_error and self.finish_result is None:
+            self.finish_result = {"_finish": True, **pending}
+        return f"[tool<-] {name}: {json.dumps(summary, ensure_ascii=False)}\n"
+
+    def _result(self, message: Any) -> str:
+        if usage := _get(message, "usage"):
+            self._set_usage(usage)
+        if turns := _get(message, "num_turns"):
+            self.turns = int(turns)
+        if cost := _get(message, "total_cost_usd"):
+            self.total_cost_usd = float(cost)
+        if _get(message, "is_error", False):
+            self.error = f"Claude Agent SDK result {_get(message, 'subtype', 'error')}"
+
+        parts = ["[cc-result]", str(_get(message, "subtype", ""))]
+        if duration_ms := _get(message, "duration_ms"):
+            parts.append(f"duration={duration_ms / 1000:.1f}s")
+        if self.total_cost_usd is not None:
+            parts.append(f"cost=${self.total_cost_usd:.4f}")
+        if result := str(_get(message, "result", "") or ""):
+            parts.append(f"result_size={len(result)}")
+        usage_line = (
+            f"\n[usage] in={self.usage['total_input_tokens']} "
+            f"cache_create={self.usage['total_cache_creation_input_tokens']} "
+            f"cache_read={self.usage['total_cache_read_input_tokens']} "
+            f"out={self.usage['total_output_tokens']} tool_calls={self.tool_calls}"
+        )
+        return " ".join(p for p in parts if p) + usage_line + "\n"
+
+    # -- usage helpers ----------------------------------------------------
+
+    def _add_usage(self, usage: Any) -> None:
+        if not isinstance(usage, dict):
+            return
+        self.usage["total_input_tokens"] += int(usage.get("input_tokens") or 0)
+        self.usage["total_output_tokens"] += int(usage.get("output_tokens") or 0)
+        self.usage["total_cache_creation_input_tokens"] += int(
+            usage.get("cache_creation_input_tokens") or 0
+        )
+        self.usage["total_cache_read_input_tokens"] += int(
+            usage.get("cache_read_input_tokens") or 0
+        )
+
+    def _set_usage(self, usage: Any) -> None:
+        if not isinstance(usage, dict):
+            return
+        self.usage = {
+            "total_input_tokens": int(usage.get("input_tokens") or 0),
+            "total_output_tokens": int(usage.get("output_tokens") or 0),
+            "total_cache_creation_input_tokens": int(
+                usage.get("cache_creation_input_tokens") or 0
+            ),
+            "total_cache_read_input_tokens": int(
+                usage.get("cache_read_input_tokens") or 0
+            ),
+        }
 
 
-def _iter_content_blocks(message: dict[str, Any]):
-    content = message.get("content")
-    if not isinstance(content, list):
-        return
-    for block in content:
-        if isinstance(block, dict):
-            yield block
+# ---------------------------------------------------------------------------
+# Tool bridge (PhysicalAgent registry -> SDK MCP server)
+# ---------------------------------------------------------------------------
 
 
-def _summarise_tool_result(
-    *,
-    content: Any,
-    tool_input: Any,
-    tool_use_result: Any,
-) -> dict[str, Any]:
-    summary: dict[str, Any] = {}
-    if isinstance(tool_input, dict):
-        path = _first_present(tool_input, "file_path", "path", "filename")
-        command = _first_present(tool_input, "command", "cmd")
-        if path is not None:
-            summary["path"] = str(path)
-        if command is not None:
-            summary["command"] = _truncate_text(str(command), 200)
+def _build_physical_agent_server(sdk: Any, *, env_name: str) -> Any:
+    from physical_agent.tools import create_tool_registry
 
-    if isinstance(tool_use_result, dict):
-        for key in ("interrupted", "is_error", "noOutputExpected"):
-            if key in tool_use_result:
-                summary[key] = tool_use_result[key]
-        if "stdout" in tool_use_result:
-            summary["stdout_size"] = _payload_size(tool_use_result.get("stdout"))
-        if "stderr" in tool_use_result:
-            summary["stderr_size"] = _payload_size(tool_use_result.get("stderr"))
+    registry = create_tool_registry(env_name)
+    sdk_tools = []
+    for spec in registry.get_tools_spec():
+        name = str(spec["name"])
+        description = str(spec.get("description", ""))
+        input_schema = spec.get("input_schema", {"type": "object"})
 
-    image_count, text_size = _summarise_content_size(content)
-    if image_count:
-        summary["images"] = image_count
-    if text_size:
-        summary["size"] = text_size
-    if not summary:
-        summary["size"] = _payload_size(content)
-    return summary
+        async def run_tool(
+            args: dict[str, Any],
+            *,
+            tool_name: str = name,
+        ) -> dict[str, Any]:
+            return _tool_result_to_mcp(registry.execute_tool(tool_name, args or {}))
+
+        run_tool.__name__ = f"physical_agent_{name}"
+        sdk_tools.append(sdk.tool(name, description, input_schema)(run_tool))
+
+    return sdk.create_sdk_mcp_server(
+        name="physical_agent", version="0.1.0", tools=sdk_tools
+    )
 
 
-def _summarise_content_size(content: Any) -> tuple[int, int]:
-    if isinstance(content, list):
-        image_count = 0
-        text_size = 0
-        for item in content:
-            if isinstance(item, dict) and item.get("type") == "image":
-                image_count += 1
-                continue
-            if isinstance(item, dict) and item.get("type") == "text":
-                text_size += _payload_size(item.get("text", ""))
-            else:
-                text_size += _payload_size(item)
-        return image_count, text_size
+def _tool_result_to_mcp(result: Any) -> dict[str, Any]:
+    if not isinstance(result, dict):
+        return {"content": [{"type": "text", "text": str(result)}]}
 
-    text = str(content)
-    if "'type': 'image'" in text or '"type": "image"' in text:
-        return 1, 0
-    return 0, _payload_size(content)
+    result_for_text = dict(result)
+    images = [
+        result_for_text.pop("_image_bytes", None),
+        result_for_text.pop("_image_cam_bytes", None),
+    ]
+    content: list[dict[str, Any]] = [
+        {"type": "text", "text": json.dumps(result_for_text, indent=2, default=str)},
+    ]
+    for data in images:
+        if data:
+            content.append(
+                {
+                    "type": "image",
+                    "data": base64.b64encode(data).decode("ascii"),
+                    "mimeType": "image/png",
+                }
+            )
+
+    response: dict[str, Any] = {"content": content}
+    if result_for_text.get("error"):
+        response["is_error"] = True
+    return response
 
 
-def _first_present(mapping: dict[str, Any], *keys: str) -> Any:
-    for key in keys:
-        if key in mapping and mapping[key] is not None:
-            return mapping[key]
-    return None
+# ---------------------------------------------------------------------------
+# Utilities
+# ---------------------------------------------------------------------------
+
+
+def _kind(value: Any) -> str:
+    if isinstance(value, dict):
+        return str(value.get("type") or value.get("kind") or "")
+    return value.__class__.__name__
+
+
+def _get(value: Any, key: str, default: Any = None) -> Any:
+    if isinstance(value, dict):
+        return value.get(key, default)
+    return getattr(value, key, default)
+
+
+def _message_to_json(message: Any) -> dict[str, Any]:
+    if dataclasses.is_dataclass(message):
+        data = dataclasses.asdict(message)
+    elif hasattr(message, "__dict__"):
+        data = vars(message)
+    else:
+        data = {"value": repr(message)}
+    return {"type": _kind(message), **_jsonable(data)}
+
+
+def _jsonable(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(k): _jsonable(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [_jsonable(v) for v in value]
+    if isinstance(value, bytes):
+        return {"type": "bytes", "size": len(value)}
+    return value
+
+
+def _write_jsonl(file_obj, value: dict[str, Any]) -> None:
+    file_obj.write(json.dumps(value, ensure_ascii=False, default=str) + "\n")
+    file_obj.flush()
+
+
+def _short_json(value: Any, *, limit: int) -> str:
+    text = json.dumps(value, ensure_ascii=False, default=str)
+    if len(text) <= limit:
+        return text
+    return text[:limit] + f"...(+{len(text) - limit})"
 
 
 def _payload_size(value: Any) -> int:
@@ -615,13 +535,13 @@ def _payload_size(value: Any) -> int:
         return 0
     if isinstance(value, str):
         return len(value)
-    try:
-        return len(json.dumps(value, ensure_ascii=False, default=str))
-    except TypeError:
-        return len(str(value))
+    return len(json.dumps(value, ensure_ascii=False, default=str))
 
 
-def _truncate_text(text: str, limit: int) -> str:
-    if len(text) <= limit:
-        return text
-    return text[:limit] + f"...(+{len(text) - limit})"
+def _content_has_image(value: Any) -> bool:
+    if isinstance(value, list):
+        return any(
+            isinstance(item, dict) and item.get("type") == "image" for item in value
+        )
+    text = str(value)
+    return "'type': 'image'" in text or '"type": "image"' in text
