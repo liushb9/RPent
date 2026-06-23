@@ -1,52 +1,122 @@
-"""System prompt and initial-user-message templates for the hybrid agent.
-
-The prompt bodies live as Markdown files in ``prompts/``; this module reads
-them once at import time and re-exports them under their historical names so
-callers stay unchanged. Edit the ``.md`` files to change a prompt — no Python
-diff needed.
-"""
+"""Python prompt rendering primitives."""
 from __future__ import annotations
 
-from importlib.resources import files
-
-_PROMPTS = files("physical_agent.context.prompts")
-
-
-def _read(name: str) -> str:
-    return _PROMPTS.joinpath(name).read_text(encoding="utf-8")
+import re
+import textwrap
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from typing import Any
 
 
-PERCEPTION_PREFIX = _read("perception_prefix.md")
-SYSTEM_PROMPT = _read("system.md")
-PERCEPTION_USER_TEMPLATE = _read("perception_user.md")
-INITIAL_USER_TEMPLATE = _read("initial_user.md")
-CLAUDE_CODE_PROMPT_TEMPLATE = _read("claude_code.md")
-CLAUDE_CODE_PERCEPTION_PROMPT_TEMPLATE = _read("claude_code_perception.md")
+@dataclass(frozen=True)
+class BulletList:
+    """Render items as Markdown bullets."""
+
+    items: tuple[Any, ...]
+
+    def __init__(self, items: Sequence[Any]):
+        """Create a bullet list from prompt nodes."""
+        object.__setattr__(self, "items", tuple(items))
 
 
-def format_claude_code_prompt(
-    template: str,
+@dataclass(frozen=True)
+class Numbered:
+    """Render items as a numbered Markdown list."""
+
+    items: tuple[Any, ...]
+
+    def __init__(self, items: Sequence[Any]):
+        """Create a numbered list from prompt nodes."""
+        object.__setattr__(self, "items", tuple(items))
+
+
+PromptNode = str | Mapping[str, Any] | Sequence[Any] | BulletList | Numbered
+
+_PLACEHOLDER = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
+
+
+def format_prompt(
+    prompt: PromptNode,
     *,
-    suite: str,
-    task: int,
-    seed: int,
-    recipe_tag: str,
-    output_dir: str,
+    variables: Mapping[str, object] | None = None,
 ) -> str:
-    """Substitute Claude Code prompt placeholders without ``str.format``.
+    """Render a Python prompt tree into final prompt text."""
+    vars_ = {k: str(v) for k, v in (variables or {}).items()}
+    return _render(prompt, vars_, depth=0).strip() + "\n"
 
-    The prompt contains JSON examples with literal braces, so using
-    ``str.format()`` would require escaping the whole document. Instead we
-    do targeted replacements on the legacy ``{UPPER}`` placeholders.
-    """
-    replacements = {
-        "{SUITE}": suite,
-        "{TASK}": str(task),
-        "{SEED}": str(seed),
-        "{TAG}": recipe_tag,
-        "{OUTPUT_DIR}": output_dir,
-    }
-    prompt = template
-    for old, new in replacements.items():
-        prompt = prompt.replace(old, new)
-    return prompt
+
+def _render(value: Any, variables: Mapping[str, str], *, depth: int) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return _substitute(_clean_text(value), variables)
+    if isinstance(value, BulletList):
+        return _render_list(value.items, variables, depth=depth, ordered=False)
+    if isinstance(value, Numbered):
+        return _render_list(value.items, variables, depth=depth, ordered=True)
+    if isinstance(value, Mapping):
+        return _render_mapping(value, variables, depth=depth)
+    if isinstance(value, Sequence):
+        return _render_list(value, variables, depth=depth, ordered=False)
+    return str(value)
+
+
+def _render_mapping(
+    value: Mapping[str, Any],
+    variables: Mapping[str, str],
+    *,
+    depth: int,
+) -> str:
+    parts: list[str] = []
+    for title, body in value.items():
+        rendered = _render(body, variables, depth=depth + 1).strip()
+        if not rendered:
+            continue
+        if depth == 0:
+            section = [
+                "═" * 71,
+                _title(title),
+                "═" * 71,
+                "",
+                rendered,
+            ]
+            parts.append("\n".join(section))
+        else:
+            parts.append(f"{'#' * min(depth + 2, 6)} {_title(title)}\n\n{rendered}")
+    return "\n\n\n".join(parts)
+
+
+def _render_list(
+    items: Sequence[Any],
+    variables: Mapping[str, str],
+    *,
+    depth: int,
+    ordered: bool,
+) -> str:
+    rendered_items = [
+        _render(item, variables, depth=depth + 1).strip()
+        for item in items
+    ]
+    rendered_items = [item for item in rendered_items if item]
+    lines: list[str] = []
+    for index, item in enumerate(rendered_items, 1):
+        prefix = f"{index}. " if ordered else "- "
+        item_lines = item.splitlines()
+        lines.append(prefix + item_lines[0])
+        lines.extend(" " * len(prefix) + line for line in item_lines[1:])
+    return "\n".join(lines)
+
+
+def _clean_text(text: str) -> str:
+    return textwrap.dedent(text).strip()
+
+
+def _substitute(text: str, variables: Mapping[str, str]) -> str:
+    def _sub(match: re.Match[str]) -> str:
+        return variables[match.group(1)]
+
+    return _PLACEHOLDER.sub(_sub, text)
+
+
+def _title(value: str) -> str:
+    return value.replace("_", " ").upper()

@@ -1,8 +1,13 @@
 """LIBERO environment extension."""
 from __future__ import annotations
 
-from physical_agent.envs.base import EnvSpec
-from physical_agent.envs.libero.prompt_bundle import PROMPTS
+from physical_agent.envs.base import EnvSpec, PromptBundle
+from physical_agent.envs.libero.prompt_bundle import (
+    api_system,
+    api_user,
+    cli_system,
+    cli_user,
+)
 
 
 def get_env_spec() -> EnvSpec:
@@ -13,7 +18,12 @@ def get_env_spec() -> EnvSpec:
     """
     return EnvSpec(
         name="libero",
-        prompts=PROMPTS,
+        prompts=PromptBundle(
+            api_system=api_system,
+            api_user=api_user,
+            cli_system=cli_system,
+            cli_user=cli_user,
+        ),
     )
 
 

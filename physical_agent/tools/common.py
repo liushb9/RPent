@@ -7,14 +7,12 @@ from pathlib import Path
 from physical_agent.utils.config import get_repo_root
 from physical_agent.utils.logging import get_output_dir
 
-
 TOOLS_SPEC: list[dict] = [
     {
         "name": "read_text_file",
         "description": (
-            "Read a UTF-8 text file. Use for guides (STRICT_HYBRID_GUIDE.md, "
-            "PRO_HYBRID_GUIDE.md, env_calibration.md), past recipe JSONLs, "
-            "audit JSONs, and memory files. Large files are truncated."
+            "Read a UTF-8 text file. Use for past recipe JSONLs, audit JSONs, "
+            "and memory files. Large files are truncated."
         ),
         "input_schema": {
             "type": "object",

@@ -1,4 +1,7 @@
-# LIBERO-Pro Hybrid (Pi0.5 + LLM-in-the-loop) — Handover Guide
+"""LIBERO-Pro guide prompt text."""
+from __future__ import annotations
+
+PRO_HYBRID_GUIDE = r'''# LIBERO-Pro Hybrid (Pi0.5 + LLM-in-the-loop) — Handover Guide
 
 You are picking up the **LIBERO-Pro** evaluation track from a previous session.
 This guide is everything you need to continue from a cold start. Read it once
@@ -6,14 +9,14 @@ end-to-end before you launch a driver.
 
 This document layers on top of the base hybrid playbook. Read **both**:
 
-- [`../STRICT_HYBRID_GUIDE.md`](../STRICT_HYBRID_GUIDE.md) — primitive
+- `strict_hybrid_guide.py` — primitive
   vocabulary, the three Rules (0/1/2), command JSON schemas, mental model,
   worked examples on standard LIBERO.
 - **This file** — LIBERO-Pro–specific setup, the four perturbation axes,
   Pi0 baseline runner, frame split, and current audit corpus.
 
 Whenever this guide says "see Rule N" or "the standard primitive vocabulary",
-it is referring to STRICT_HYBRID_GUIDE.md. **Every rule there applies here**;
+it is referring to `strict_hybrid_guide.py`. **Every rule there applies here**;
 this guide only *adds* constraints and tooling.
 
 ## 1. Why LIBERO-Pro
@@ -146,8 +149,7 @@ libero_spatial_lan  t0: 'lift the black bowl between the plate and ramekin and s
 ## 3. PRO-specific environment gotchas
 
 Everything in STRICT_HYBRID_GUIDE applies. The following are **additional**
-constraints for LIBERO-Pro (most live in detail at
-[`env_calibration.md`](./env_calibration.md)).
+constraints for LIBERO-Pro (most live in detail at `env_calibration.py`).
 
 ### 3.1. Two scene frames, picked per-task
 
@@ -179,7 +181,7 @@ release_z = 1.01  # ~7 cm above plate top at z≈0.90
 OSC will flip IK branches if you command `|x|>0.30` or `|y|>0.30` in a
 single move. The eef jumps to the wrong half-space and the rest of the
 run is corrupt. **Never command beyond ±0.30 in a single `move_to`.**
-Use waypoints. (Detail in env_calibration.md.)
+Use waypoints. (Detail in `env_calibration.py`.)
 
 ### 3.3. Slow long-distance carry for swap variants
 
@@ -295,19 +297,20 @@ reading `final_state` and printing object xy distance to the place target.
 Cataloged so you don't redo:
 
 ```
-workspace_pro/
-├── PRO_HYBRID_GUIDE.md                 <- this file
-├── README.md                           <- patch overview
-├── env_calibration.md                  <- OSC frame bounds + safe altitudes
-├── liberopro_register_perturbations.patch
-└── results_spatial_pert/
-    ├── REPORT_spatial_t0.md            <- Pi0 baseline vs hybrid table
-    ├── spatial_task_t0_s0.json         <- hybrid audits
-    ├── spatial_swap_t0_s0.json
-    ├── spatial_lan_t0_s0.json
-    ├── recipe_spatial_{task,swap,lan}_t0_s0.jsonl
-    ├── baseline_pi0_spatial_{base,task,swap,lan}_t0_s0.json
-    └── baseline_imgs/{base,task,swap,lan}/{initial,final}.png
+physical_agent/envs/libero/prompts/
+├── pro_hybrid_guide.py                 <- this file
+├── strict_hybrid_guide.py
+└── env_calibration.py                  <- OSC frame bounds + safe altitudes
+scripts/
+└── liberopro_register_perturbations.patch
+results_spatial_pert/
+├── REPORT_spatial_t0.md                <- Pi0 baseline vs hybrid table
+├── spatial_task_t0_s0.json             <- hybrid audits
+├── spatial_swap_t0_s0.json
+├── spatial_lan_t0_s0.json
+├── recipe_spatial_{task,swap,lan}_t0_s0.jsonl
+├── baseline_pi0_spatial_{base,task,swap,lan}_t0_s0.json
+└── baseline_imgs/{base,task,swap,lan}/{initial,final}.png
 ```
 
 Single-seed proof point established. **None of t1–t9 done yet, and seed 0
@@ -363,5 +366,5 @@ LIBERO_TYPE=pro CUDA_VISIBLE_DEVICES=0 python \
 ```
 
 When in doubt about a primitive or a rule, the source of truth is
-[`../STRICT_HYBRID_GUIDE.md`](../STRICT_HYBRID_GUIDE.md). This guide only
-adds; it does not override.
+`strict_hybrid_guide.py`. This guide only
+adds; it does not override.'''

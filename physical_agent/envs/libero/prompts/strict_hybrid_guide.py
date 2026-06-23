@@ -1,4 +1,7 @@
-# Strict Hybrid LLM + Pi0.5 — Handover Guide
+"""Strict hybrid guide prompt text."""
+from __future__ import annotations
+
+STRICT_HYBRID_GUIDE = r'''# Strict Hybrid LLM + Pi0.5 — Handover Guide
 
 You are taking over a hybrid LIBERO experiment from a previous session. This
 guide is everything you need to know to continue iterating on **strict** hybrid:
@@ -1261,4 +1264,4 @@ Good luck. Don't let Pi0 do the place — that's the LLM's job (Rule 1).
 For OSC singularities, reorient with `rotate_wrist`/`rotate_pitch` and
 approach from a non-singular pose; for articulation closes, push physically
 (pi0_doubled / capped OSC push). NO teleport — see Rule 4.
-**Before debugging from scratch, check memory.**
+**Before debugging from scratch, check memory.**'''

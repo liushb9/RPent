@@ -362,24 +362,35 @@ def main() -> int:
     # Auto-route LIBERO_TYPE if not set
     libero_type = args.libero_type or get_libero_type()
 
+    prompt_vars = {
+        "suite": suite,
+        "task": task,
+        "seed": seed,
+        "output_dir": output_dir,
+        "recipe_tag": recipe_tag,
+    }
     if args.cerebrum in {"claude_code", "codex"}:
-        system_prompt = ""
-        template = prompt_bundle.cli_prompt_template(perception=args.perception)
-        user_msg = prompt_bundle.format_claude_code_prompt(
-            template,
-            suite=suite, task=task, seed=seed,
-            output_dir=output_dir, recipe_tag=recipe_tag,
+        system_prompt = prompt_bundle.render(
+            "cli_system",
+            variables=prompt_vars,
+            perception=args.perception,
+        )
+        user_msg = prompt_bundle.render(
+            "cli_user",
+            variables=prompt_vars,
+            perception=args.perception,
         )
     else:
-        user_msg = prompt_bundle.api_user_message(
+        system_prompt = prompt_bundle.render(
+            "api_system",
+            variables=prompt_vars,
             perception=args.perception,
-            suite=suite,
-            task=task,
-            seed=seed,
-            output_dir=output_dir,
-            recipe_tag=recipe_tag,
         )
-        system_prompt = prompt_bundle.api_system_prompt(perception=args.perception)
+        user_msg = prompt_bundle.render(
+            "api_user",
+            variables=prompt_vars,
+            perception=args.perception,
+        )
 
     proc = None
     vla_proc = None

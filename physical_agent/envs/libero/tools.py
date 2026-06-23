@@ -878,12 +878,14 @@ def dump_state(driver: LiberoPrimitives, output_dir: str, step_idx: int,
         if cam_meta:
             cam_meta_out = dict(cam_meta)
             cam_meta_out["projection"] = (
-                "world->pixel: M = K_exp @ inv(extrinsic_cam2world), where "
-                "K_exp is 4x4 (K in top-left). q = M @ [X,Y,Z,1]; "
+                "Prefer the back_project(row, col, step=NN) MCP tool. "
+                "For reference: world->pixel first computes "
+                "camera_xyz = (inv(extrinsic_cam2world) @ [X,Y,Z,1])[:3], "
+                "then q = K @ camera_xyz; "
                 "col=q[0]/q[2], row=q[1]/q[2], metric_depth=q[2]. "
-                "(row,col) indexes depth_NN.npy directly. Back-project a pixel: "
-                "P_world = extrinsic_cam2world @ [col*z, row*z, z, 1] with "
-                "z=depth_NN[row,col]. VERIFIED 5/5 vs GT object poses.")
+                "Back-project a pixel with z=depth_NN[row,col] by computing "
+                "camera_xyz = inv(K) @ [col,row,1] * z, then "
+                "P_world = extrinsic_cam2world @ [camera_xyz,1].")
             cam_meta_out["note"] = (
                 "depth_NN.npy is in this camera frame (vertical-flipped raw "
                 "buffer). image_NN.png is rotated 180deg (Pi0 convention) and "
