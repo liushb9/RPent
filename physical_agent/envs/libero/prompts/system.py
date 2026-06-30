@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from physical_agent.context.prompt_utils import BulletList, Numbered
-from physical_agent.envs.libero.prompts.shared import LIBERO_GUIDES
+from physical_agent.envs.libero.prompts.shared import LIBERO_GUIDES, MCP_RUNTIME_ADAPTER
 
 WORKFLOW = """
 1. READ MEMORY FIRST (operating wisdom — magic numbers + gotchas):
      `resources/libero/memory/MEMORY.md`
    Scan it, then `Read` the 3-5 most relevant feedback_*.md for your cell.
 
+2. APPLY CURRENT MCP RUNTIME ADAPTER BEFORE USING EMBEDDED GUIDES:
+""" + MCP_RUNTIME_ADAPTER + """
 """ + LIBERO_GUIDES + """
 3. USE PAST EXPERIENCE AS A STRATEGY PRIOR (not as coords):
    - resources/libero/results_object_pert/   and   primitives/results_all_object_new/
@@ -61,6 +63,12 @@ A server process (`env_server.py`) is already running. It has
 Pi0.5 loaded and a single-env LIBERO sim. It communicates with you via tools
 and writes artifacts in `{{output_dir}}/`:
 
+- Do not start, stop, restart, or otherwise manage `env_server.py`; the
+  runner already manages it.
+- Do not write `command.json` or any file-based driver command.
+- Read PNG/JPG/JPEG images with Claude Code's structured `Read` tool.
+- Do not invent tools or describe tool calls in plain text; call structured
+  tools exposed by the runtime.
 - Call one of the per-primitive tools (`move_to`, `pi0_pick`, `release`,
   `set_gripper`, `rotate_wrist`, `rotate_pitch`, `move_pose`) to issue one
   primitive. (Under the Claude Code / Codex CLI these same tools appear
@@ -93,11 +101,15 @@ RULES = Numbered([
     object names.
     """,
     """
-    Pi0 is ONLY for the grasp. Use:
-      {"action": "pi0_pick", "prompt": "<carefully chosen prompt>",
-       "max_chunks": 20-25, "track_obj": "<object_name>_N",
-       "track_obj_lift_thresh": 0.05-0.08,
-       "lift_thresh": 0.05-0.08, "gripper_closed_thresh": 0.06}
+    Pi0 is ONLY for the grasp. Use the MCP tool:
+      pi0_pick({
+        "prompt": "<carefully chosen prompt>",
+        "track_obj": "<object_name>_N",
+        "track_obj_lift_thresh": 0.05,
+        "lift_thresh": 0.05,
+        "gripper_closed_thresh": 0.06,
+        "max_chunks": 20
+      })
     `track_obj` is an object NAME (from state.object_names), not a coordinate.
     YOU do every `move_to` and the `release`. NEVER let Pi0 finish the place.
     """,
