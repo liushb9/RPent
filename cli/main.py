@@ -22,7 +22,6 @@ from physical_agent.cerebrum.base import build_cerebrum  # noqa: E402
 from physical_agent.envs import get_env_spec, get_toolkit  # noqa: E402
 from physical_agent.rpc_driver import (  # noqa: E402
     create_rpc_client,
-    get_socket_endpoint,
     set_socket_endpoint,
 )
 from physical_agent.rpc_driver.vla_client import VLAClient  # noqa: E402
@@ -391,7 +390,6 @@ def main() -> int:
     cerebrum = build_cerebrum(
         args.cerebrum,
         output_dir=output_dir,
-        env_name=env_spec.name,
         recipe_tag=recipe_tag,
         api_key=args.api_key,
         base_url=args.base_url,
@@ -400,8 +398,6 @@ def main() -> int:
         claude_code_timeout_s=args.claude_code_timeout_s,
         claude_code_max_budget_usd=args.claude_code_max_budget_usd,
         codex_timeout_s=args.codex_timeout_s,
-        transport_host=args.transport_host,
-        transport_port=args.transport_port,
         dashboard=dashboard_state,
     )
 
@@ -443,14 +439,6 @@ def main() -> int:
                 cuda_device=args.cuda_device,
                 log_path=str(Path(output_dir) / "vla_server.log"),
             )
-        if args.cerebrum == "codex":
-            endpoint = get_socket_endpoint(output_dir)
-            if endpoint is None:
-                raise RuntimeError(
-                    f"socket endpoint not registered for output_dir: {output_dir}"
-                )
-            cerebrum.set_socket_endpoint(*endpoint)
-            cerebrum.set_vla_endpoint(vla_endpoint)
         toolkit = get_toolkit(
             env_name,
             primitives_kwargs={
@@ -478,9 +466,6 @@ def main() -> int:
                 "--no_driver requires --vla_endpoint pointing at an existing vla_server"
             )
         set_socket_endpoint(output_dir, args.transport_host, args.transport_port)
-        if args.cerebrum == "codex":
-            cerebrum.set_socket_endpoint(args.transport_host, args.transport_port)
-            cerebrum.set_vla_endpoint(vla_endpoint)
         toolkit = get_toolkit(
             env_name,
             primitives_kwargs={

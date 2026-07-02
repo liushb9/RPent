@@ -48,7 +48,6 @@ class ClaudeCodeCerebrum:
         max_budget_usd: float = 10.0,
         extra_dirs: list[str] | None = None,
         output_path: str | Path | None = None,
-        video_path: str = "",
         dashboard: Any = None,
     ):
         """Initialize the Claude Agent SDK backend."""
@@ -60,7 +59,6 @@ class ClaudeCodeCerebrum:
         self._max_budget_usd = max_budget_usd
         self._extra_dirs = extra_dirs or []
         self._output_path = Path(output_path) if output_path else None
-        self._video_path = video_path
         self._dashboard = dashboard
 
     def solve(

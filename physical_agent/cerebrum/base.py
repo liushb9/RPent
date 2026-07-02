@@ -97,7 +97,6 @@ def build_cerebrum(
     cerebrum_type: str,
     *,
     output_dir: str | Path,
-    env_name: str,
     recipe_tag: str,
     api_key: str | None = None,
     base_url: str | None = None,
@@ -106,8 +105,6 @@ def build_cerebrum(
     claude_code_timeout_s: int | None = None,
     claude_code_max_budget_usd: float | None = None,
     codex_timeout_s: int | None = None,
-    transport_host: str = "127.0.0.1",
-    transport_port: int = 0,
     dashboard: Any = None,
 ):
     """Build a cerebrum for the given backend, resolving credentials from env vars."""
@@ -179,7 +176,6 @@ def build_cerebrum(
             max_budget_usd=cc_budget,
             extra_dirs=[str(get_memory_dir())],
             output_path=Path(output_dir) / f"claude_{recipe_tag}.txt",
-            video_path=str(Path(output_dir) / "episode.mp4"),
             dashboard=dashboard,
         )
     if cerebrum_type == "codex":
@@ -193,13 +189,8 @@ def build_cerebrum(
         return CodexCerebrum(
             output_dir=output_dir,
             repo_root=get_repo_root(),
-            model=model,
             timeout_s=cx_timeout_s,
             extra_dirs=[str(get_memory_dir())],
             output_path=Path(output_dir) / f"codex_{recipe_tag}.txt",
-            transport_host=transport_host,
-            transport_port=transport_port,
-            env_name=env_name,
-            video_path=str(Path(output_dir) / "episode.mp4"),
         )
     raise ValueError(f"unknown cerebrum_type: {cerebrum_type}")

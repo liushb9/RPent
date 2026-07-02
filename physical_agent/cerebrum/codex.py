@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import tempfile
 import threading
 import time
@@ -22,11 +21,15 @@ from typing import Any
 import openai_codex
 
 from physical_agent.cerebrum.base import CerebrumResult, strip_mcp_prefix
+from physical_agent.cerebrum.utils.http_mcp_server import HttpMcpServer
 from physical_agent.tools.toolkit import Toolkit
 from physical_agent.utils.config import get_repo_root
 from physical_agent.utils.logging import get_logger
 
 logger = get_logger("codex")
+
+PROVIDER_ID = "physical_agent_proxy"
+PROVIDER_ENV_KEY = "PHYSICAL_AGENT_CODEX_PROVIDER_KEY"
 
 # ---------------------------------------------------------------------------
 # Public backend
@@ -41,37 +44,19 @@ class CodexCerebrum:
         *,
         output_dir: str,
         repo_root: str | Path | None = None,
-        model: str | None = None,
         timeout_s: int = 600,
         extra_dirs: list[str] | None = None,
         output_path: str | Path | None = None,
-        transport_host: str = "127.0.0.1",
-        transport_port: int = 0,
-        vla_endpoint: str = "",
-        env_name: str = "libero",
-        video_path: str = "",
     ):
         """Initialize the Codex SDK backend."""
         self._output_dir = str(output_dir)
         self._repo_root = str(repo_root) if repo_root else str(get_repo_root())
-        self._model = model
         self._timeout_s = timeout_s
         self._extra_dirs = extra_dirs or []
         self._output_path = Path(output_path) if output_path else None
-        self._transport_host = transport_host
-        self._transport_port = int(transport_port)
-        self._vla_endpoint = vla_endpoint
-        self._env_name = env_name
-        self._video_path = video_path
-
-    def set_socket_endpoint(self, host: str, port: int) -> None:
-        """Record the driver socket endpoint discovered after startup."""
-        self._transport_host = host
-        self._transport_port = int(port)
-
-    def set_vla_endpoint(self, endpoint: str) -> None:
-        """Record the vla_server HTTP endpoint discovered after startup."""
-        self._vla_endpoint = endpoint
+        self._model = os.environ.get("CODEX_MODEL", None)
+        self._base_url = os.environ.get("CODEX_BASE_URL", None)
+        self._api_key = os.environ.get("CODEX_API_KEY", None)
 
     def solve(
         self,
@@ -82,7 +67,6 @@ class CodexCerebrum:
         max_turns: int,
     ) -> CerebrumResult:
         """Run one Codex SDK turn for the given prompt."""
-        del toolkit  # tools run in a separate MCP subprocess; see _build_config
         prompt = f"{system_prompt}\n\n{user_message}" if system_prompt else user_message
         if self._output_path is None:
             with tempfile.NamedTemporaryFile(
@@ -96,6 +80,12 @@ class CodexCerebrum:
         last_message_path = output_path.with_suffix(output_path.suffix + ".last")
         recorder = _Recorder(max_turns=max_turns)
         state: dict[str, Any] = {}
+
+        # Start the in-thread MCP HTTP server so Codex can reach the
+        # shared toolkit without spawning a subprocess.
+        mcp_server = HttpMcpServer(toolkit)
+        mcp_url = mcp_server.start()
+        logger.info("mcp http endpoint: %s", mcp_url)
 
         model_desc = self._model or "(configured default)"
         logger.info("prompt: %d chars", len(prompt))
@@ -116,33 +106,37 @@ class CodexCerebrum:
                 last_message_path,
                 recorder,
                 state,
+                mcp_url,
             ),
             name="codex-sdk",
             daemon=True,
         )
         worker.start()
-        worker.join(timeout=self._timeout_s)
+        try:
+            worker.join(timeout=self._timeout_s)
 
-        error: str | None = None
-        if worker.is_alive():
-            error = f"Codex SDK timed out after {self._timeout_s}s"
-            _interrupt(state)
-            rendered = f"\n[codex-cerebrum] {error}\n"
-            with open(output_path, "a") as out_f:
-                out_f.write(rendered)
-            with open(raw_stream_path, "a") as raw_f:
-                _write_jsonl(raw_f, {"type": "timeout", "message": error})
-            logger.info(rendered.rstrip())
-            worker.join(timeout=15)
-        elif "error" in state:
-            exc = state["error"]
-            error = f"{type(exc).__name__}: {exc}"
-            rendered = f"\n[codex-cerebrum] {error}\n"
-            with open(output_path, "a") as out_f:
-                out_f.write(rendered)
-            with open(raw_stream_path, "a") as raw_f:
-                _write_jsonl(raw_f, {"type": "error", "message": error})
-            logger.info(rendered.rstrip())
+            error: str | None = None
+            if worker.is_alive():
+                error = f"Codex SDK timed out after {self._timeout_s}s"
+                _interrupt(state)
+                rendered = f"\n[codex-cerebrum] {error}\n"
+                with open(output_path, "a") as out_f:
+                    out_f.write(rendered)
+                with open(raw_stream_path, "a") as raw_f:
+                    _write_jsonl(raw_f, {"type": "timeout", "message": error})
+                logger.info(rendered.rstrip())
+                worker.join(timeout=15)
+            elif "error" in state:
+                exc = state["error"]
+                error = f"{type(exc).__name__}: {exc}"
+                rendered = f"\n[codex-cerebrum] {error}\n"
+                with open(output_path, "a") as out_f:
+                    out_f.write(rendered)
+                with open(raw_stream_path, "a") as raw_f:
+                    _write_jsonl(raw_f, {"type": "error", "message": error})
+                logger.info(rendered.rstrip())
+        finally:
+            mcp_server.stop()
 
         elapsed = time.time() - started
         text = state.get("text", "") or output_path.read_text(errors="replace")
@@ -178,12 +172,13 @@ class CodexCerebrum:
         last_message_path: Path,
         recorder: "_Recorder",
         state: dict[str, Any],
+        mcp_url: str,
     ) -> None:
         try:
             approval = openai_codex.ApprovalMode.deny_all
             sandbox = openai_codex.Sandbox.full_access
             chunks: list[str] = []
-            with openai_codex.Codex(config=self._build_config()) as codex:
+            with openai_codex.Codex(config=self._build_config(mcp_url)) as codex:
                 state["codex"] = codex
                 thread = codex.thread_start(
                     approval_mode=approval,
@@ -221,21 +216,25 @@ class CodexCerebrum:
 
     # -- config builder ----------------------------------------------------
 
-    def _build_config(self) -> Any:
+    def _build_config(self, mcp_url: str) -> Any:
+        env = {**os.environ}
+        if self._api_key:
+            env[PROVIDER_ENV_KEY] = self._api_key
         kwargs: dict[str, Any] = {
             "config_overrides": tuple(
                 _codex_mcp_config_overrides(
-                    output_dir=self._output_dir,
-                    repo_root=self._repo_root,
-                    transport_host=self._transport_host,
-                    transport_port=self._transport_port,
-                    vla_endpoint=self._vla_endpoint,
-                    env_name=self._env_name,
-                    video_path=self._video_path,
+                    mcp_url=mcp_url,
+                    base_url=self._base_url,
                 )
             ),
             "cwd": self._repo_root,
-            "env": {**os.environ},
+            "env": env,
+            # Disable experimental API features (namespace tools,
+            # web_search, image_generation).  This forces the binary to
+            # convert namespace MCP tools to function tools internally
+            # while preserving its own name→namespace mapping so that
+            # ``function_call`` responses can be routed through MCP.
+            "experimental_api": False,
         }
         if codex_bin := os.environ.get("CODEX_BIN"):
             kwargs["codex_bin"] = codex_bin
@@ -381,64 +380,31 @@ class _Recorder:
 
 
 # ---------------------------------------------------------------------------
-# MCP overrides (PhysicalAgent stdio bridge)
+# Codex config overrides
 # ---------------------------------------------------------------------------
 
 
 def _codex_mcp_config_overrides(
     *,
-    output_dir: str,
-    repo_root: str,
-    transport_host: str,
-    transport_port: int,
-    vla_endpoint: str,
-    env_name: str,
-    video_path: str,
+    mcp_url: str,
+    base_url: str | None,
 ) -> list[str]:
-    if transport_port <= 0:
-        raise RuntimeError("Codex SDK MCP socket transport requires a bound port")
-    if not vla_endpoint:
-        raise RuntimeError("Codex SDK MCP server requires a vla_endpoint")
-
-    pythonpath = repo_root
-    if existing := os.environ.get("PYTHONPATH"):
-        pythonpath = repo_root + os.pathsep + existing
-
-    server_args = [
-        "-m",
-        "physical_agent.cerebrum.mcp.mcp",
-        "--output-dir",
-        output_dir,
-        "--repo-root",
-        repo_root,
-        "--transport-host",
-        transport_host,
-        "--transport-port",
-        str(transport_port),
-        "--vla-endpoint",
-        vla_endpoint,
-        "--env",
-        env_name,
-    ]
-    if video_path:
-        server_args += ["--video-path", video_path]
-
     config: list[tuple[str, Any]] = [
-        ("mcp_servers.physical_agent.command", sys.executable),
-        ("mcp_servers.physical_agent.args", server_args),
-        ("mcp_servers.physical_agent.env.HYBRID_DRIVER_OUTPUT_DIR", output_dir),
-        (
-            "mcp_servers.physical_agent.env.PHYSICAL_AGENT_TRANSPORT_HOST",
-            transport_host,
-        ),
-        (
-            "mcp_servers.physical_agent.env.PHYSICAL_AGENT_TRANSPORT_PORT",
-            str(transport_port),
-        ),
-        ("mcp_servers.physical_agent.env.PHYSICAL_AGENT_VLA_ENDPOINT", vla_endpoint),
-        ("mcp_servers.physical_agent.env.PHYSICAL_AGENT_ENV", env_name),
-        ("mcp_servers.physical_agent.env.PYTHONPATH", pythonpath),
+        ("mcp_servers.physical_agent.url", mcp_url),
     ]
+    if base_url:
+        normalized = base_url.rstrip("/")
+        if not normalized.endswith("/v1"):
+            normalized = normalized + "/v1"
+        config.extend(
+            [
+                ("model_provider", PROVIDER_ID),
+                (f"model_providers.{PROVIDER_ID}.name", PROVIDER_ID),
+                (f"model_providers.{PROVIDER_ID}.base_url", normalized),
+                (f"model_providers.{PROVIDER_ID}.wire_api", "responses"),
+                (f"model_providers.{PROVIDER_ID}.env_key", PROVIDER_ENV_KEY),
+            ]
+        )
     return [f"{key}={json.dumps(value)}" for key, value in config]
 
 
