@@ -233,16 +233,16 @@
           </select>
         </div>
         <div class="lfield">
-          <label for="f-max_turns">Max turns</label>
-          <input type="number" id="f-max_turns" min="1" step="1" />
+          <label for="f-max-turns">Max turns</label>
+          <input type="number" id="f-max-turns" min="1" step="1" />
         </div>
         <div class="lfield backend-field" data-backends="api">
-          <label for="f-max_tokens">Max tokens</label>
-          <input type="number" id="f-max_tokens" min="1" step="1" />
+          <label for="f-max-tokens">Max tokens</label>
+          <input type="number" id="f-max-tokens" min="1" step="1" />
         </div>
         <div class="lfield">
-          <label for="f-max_episode_steps">Max episode steps</label>
-          <input type="number" id="f-max_episode_steps" min="1" step="1" />
+          <label for="f-max-episode-steps">Max episode steps</label>
+          <input type="number" id="f-max-episode-steps" min="1" step="1" />
         </div>
         <div class="lfield backend-field full" data-backends="api claude_code codex">
           <label for="f-model_preset">Model preset</label>
@@ -253,16 +253,16 @@
           <input type="text" id="f-model_custom" placeholder="provider:model or alias" />
         </div>
         <div class="lfield backend-field" data-backends="claude_code">
-          <label for="f-claude_code_max_budget_usd">Claude Code budget USD</label>
-          <input type="number" id="f-claude_code_max_budget_usd" min="0" step="0.01" placeholder="MAX_BUDGET_USD" />
+          <label for="f-claude-code-max-budget-usd">Claude Code budget USD</label>
+          <input type="number" id="f-claude-code-max-budget-usd" min="0" step="0.01" placeholder="MAX_BUDGET_USD" />
         </div>
         <div class="lfield backend-field" data-backends="claude_code codex">
-          <label for="f-cerebrum_timeout_s">Cerebrum timeout s</label>
-          <input type="number" id="f-cerebrum_timeout_s" min="1" step="1" placeholder="CELL_TIMEOUT_S / CODEX_TIMEOUT_S" />
+          <label for="f-cerebrum-timeout-s">Cerebrum timeout s</label>
+          <input type="number" id="f-cerebrum-timeout-s" min="1" step="1" placeholder="CELL_TIMEOUT_S / CODEX_TIMEOUT_S" />
         </div>
         <div class="lfield">
-          <label for="f-cuda_device">CUDA device <span style="text-transform:none">(blank = default)</span></label>
-          <input type="text" id="f-cuda_device" placeholder="default" />
+          <label for="f-cuda-device">CUDA device <span style="text-transform:none">(blank = default)</span></label>
+          <input type="text" id="f-cuda-device" placeholder="default" />
         </div>
       </div>
       <div class="launch-actions">
@@ -1066,12 +1066,12 @@ function showLauncher(defaults) {
   set("#f-task", d.task);
   set("#f-seed", d.seed);
   set("#f-cerebrum", d.cerebrum || "claude_code");
-  set("#f-max_turns", d.max_turns);
-  set("#f-max_tokens", d.max_tokens);
-  set("#f-max_episode_steps", d.max_episode_steps);
-  set("#f-cerebrum_timeout_s", d.cerebrum_timeout_s);
-  set("#f-claude_code_max_budget_usd", d.claude_code_max_budget_usd);
-  set("#f-cuda_device", d.cuda_device);
+  set("#f-max-turns", d["max-turns"]);
+  set("#f-max-tokens", d["max-tokens"]);
+  set("#f-max-episode-steps", d["max-episode-steps"]);
+  set("#f-cerebrum-timeout-s", d["cerebrum-timeout-s"]);
+  set("#f-claude-code-max-budget-usd", d["claude-code-max-budget-usd"]);
+  set("#f-cuda-device", d["cuda-device"]);
   populateModelPresets($("#f-cerebrum").value, d.model || "");
   if ((MODEL_PRESETS[$("#f-cerebrum").value] || []).includes(d.model || "")) {
     set("#f-model_custom", "");
@@ -1092,13 +1092,13 @@ function collectLaunchConfig() {
     task: numOrNull("#f-task"),
     seed: numOrNull("#f-seed"),
     cerebrum: $("#f-cerebrum").value,
-    max_turns: numOrNull("#f-max_turns"),
-    max_tokens: numOrNull("#f-max_tokens"),
-    max_episode_steps: numOrNull("#f-max_episode_steps"),
+    "max-turns": numOrNull("#f-max-turns"),
+    "max-tokens": numOrNull("#f-max-tokens"),
+    "max-episode-steps": numOrNull("#f-max-episode-steps"),
     model: selectedModel(),
-    cerebrum_timeout_s: numOrNull("#f-cerebrum_timeout_s"),
-    claude_code_max_budget_usd: numOrNull("#f-claude_code_max_budget_usd"),
-    cuda_device: $("#f-cuda_device").value.trim(),
+    "cerebrum-timeout-s": numOrNull("#f-cerebrum-timeout-s"),
+    "claude-code-max-budget-usd": numOrNull("#f-claude-code-max-budget-usd"),
+    "cuda-device": $("#f-cuda-device").value.trim(),
   };
 }
 
@@ -1119,10 +1119,10 @@ async function onRun() {
   const requiredNums = [
     ["Task", config.task],
     ["Seed", config.seed],
-    ["Max turns", config.max_turns],
-    ["Max episode steps", config.max_episode_steps],
+    ["Max turns", config["max-turns"]],
+    ["Max episode steps", config["max-episode-steps"]],
   ];
-  if (config.cerebrum === "api") requiredNums.push(["Max tokens", config.max_tokens]);
+  if (config.cerebrum === "api") requiredNums.push(["Max tokens", config["max-tokens"]]);
   const badNum = requiredNums.find(([_, v]) => v == null || !Number.isFinite(v));
   if (!config.suite || badNum) {
     $("#launchStatus").textContent = !config.suite
