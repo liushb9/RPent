@@ -40,8 +40,8 @@ RPent is built upon three core design principles: Service-oriented, Standardized
   <colgroup>
     <col style="width: 26%;">
     <col style="width: 28%;">
-    <col style="width: 24%;">
-    <col style="width: 22%;">
+    <col style="width: 20%;">
+    <col style="width: 26%;">
   </colgroup>
   <thead align="center" valign="bottom">
     <tr>
