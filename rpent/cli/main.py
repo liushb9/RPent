@@ -380,7 +380,7 @@ def main() -> int:
         # The run directory is not final until the launcher form is submitted, so
         # print the pre-launch URL without initializing the run.log file handler.
         print(
-            f"[agent] Dashboard: {dashboard_url}. "
+            f"Dashboard: {dashboard_url}. "
             "Open it, adjust the run config, and click Run to start.",
             flush=True,
         )
